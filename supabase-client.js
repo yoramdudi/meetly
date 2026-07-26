@@ -13,6 +13,7 @@ window.MeetlyData = (() => {
     signUp: (email, password, name) => request('/auth/v1/signup', { method: 'POST', body: JSON.stringify({ email, password, data: { name } }) }),
     signIn: async (email, password) => { const data = await request('/auth/v1/token?grant_type=password', { method: 'POST', body: JSON.stringify({ email, password }) }); localStorage.setItem('meetly-supabase-session', JSON.stringify(data)); return data.user; },
     signOut: () => localStorage.removeItem('meetly-supabase-session'),
+    signInWithGoogle: () => { location.href = `${url}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent('https://yoramdudi.github.io/meetly/')}`; },
     currentUser: () => JSON.parse(localStorage.getItem('meetly-supabase-session') || 'null')?.user || null,
     events: () => request('/rest/v1/events?select=*&order=created_at.desc'),
     event: (id) => request(`/rest/v1/events?id=eq.${encodeURIComponent(id)}&select=*`).then((rows) => rows[0]),

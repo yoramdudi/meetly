@@ -660,8 +660,8 @@ const renderAuthMode = () => {
 
 $('#authToggle').onclick = () => { signupMode = !signupMode; renderAuthMode(); };
 $('#googleLogin').onclick = () => {
-  if (isInvitationLink()) sessionStorage.setItem('meetly-pending-invite', location.search);
-  location.href = '/.netlify/identity/authorize?provider=google';
+  if (window.MeetlyData?.signInWithGoogle) { MeetlyData.signInWithGoogle(); return; }
+  toast('התחברות Google אינה זמינה כרגע.');
 };
 $('#authForm').onsubmit = async (event) => {
   event.preventDefault();

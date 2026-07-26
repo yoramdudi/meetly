@@ -706,6 +706,9 @@ $('#authForm').onsubmit = async (event) => {
 const init = async () => {
   renderAuthMode();
   applyProfile();
+  if (window.MeetlyData?.finishGoogleLogin) {
+    try { authUser = await MeetlyData.finishGoogleLogin(); } catch { authUser = null; }
+  }
   const oauthParams = new URLSearchParams(location.hash.slice(1));
   if (oauthParams.get('access_token')) {
     try {

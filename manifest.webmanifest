@@ -1,0 +1,13 @@
+{
+  "name": "Meetly - תיאום פגישות",
+  "short_name": "Meetly",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7f6fb",
+  "theme_color": "#624fe6",
+  "lang": "he",
+  "dir": "rtl",
+  "icons": [
+    { "src": "icons/meetly-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

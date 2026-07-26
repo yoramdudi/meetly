@@ -392,7 +392,15 @@ $('#eventForm').onsubmit = async (event) => {
 };
 
 const renderChoices = () => {
-  $('#choiceList').innerHTML = choices.map(([date, time]) => `<div class="choice"><div class="choice-main"><b>${date}</b><span>${time}</span><div class="toggle"><button class="yes" data-answer="yes">\u05d9\u05db\u05d5\u05dc/\u05d4</button><button class="no" data-answer="no">\u05dc\u05d0 \u05d9\u05db\u05d5\u05dc/\u05d4</button></div></div></div>`).join('');
+  $('#choiceList').innerHTML = choices.map(([date, time]) => {
+    const parsed = new Date(`${date}T12:00:00`);
+    const readable = Number.isNaN(parsed.getTime()) ? { day: date, number: '', month: '' } : {
+      day: new Intl.DateTimeFormat('he-IL', { weekday: 'short' }).format(parsed),
+      number: new Intl.DateTimeFormat('he-IL', { day: 'numeric' }).format(parsed),
+      month: new Intl.DateTimeFormat('he-IL', { month: 'long' }).format(parsed)
+    };
+    return `<div class="choice"><div class="choice-date"><span>${readable.day}</span><b>${readable.number}</b><span>${readable.month}</span></div><div class="choice-main"><b>${time}</b><span>משך הפגישה: ${activeEvent?.duration || ''}</span><div class="toggle"><button class="yes" data-answer="yes">✓ מתאים לי</button><button class="no" data-answer="no">לא מתאים</button></div></div></div>`;
+  }).join('');
   $('#answerCount').textContent = `0/${choices.length}`;
 };
 

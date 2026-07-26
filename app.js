@@ -463,7 +463,7 @@ $('#confirmFinalize').onclick = async () => {
     });
     addToCalendar(finalized);
     hide();
-    openEventDetails(finalized);
+    openEventDetails(finalized, true);
     toast('\u05d4\u05d1\u05d7\u05d9\u05e8\u05d4 \u05e0\u05e1\u05d2\u05e8\u05d4. \u05e0\u05e4\u05ea\u05d7 \u05d6\u05d9\u05de\u05d5\u05df \u05e0\u05e4\u05e8\u05d3 \u05dc\u05db\u05dc \u05de\u05d5\u05d6\u05de\u05df.');
   } catch (error) {
     toast(error.message || '\u05dc\u05d0 \u05d4\u05e6\u05dc\u05d7\u05e0\u05d5 \u05dc\u05e1\u05d2\u05d5\u05e8 \u05d0\u05ea \u05d4\u05d1\u05d7\u05d9\u05e8\u05d4.');
@@ -479,7 +479,7 @@ $('#detailGuests').onclick = (event) => {
   button.dataset.action === 'reminder' ? sendReminder(activeEvent, guest) : sendAvailabilityInvite(activeEvent, guest);
 };
 
-const openEventDetails = (eventData) => {
+const openEventDetails = (eventData, ownerView = Boolean(authUser && eventData.ownerId === authUser.id)) => {
   activeEvent = eventData.id ? eventData : null;
   choices = eventData.options;
   $('#detailTitle').textContent = eventData.title;
@@ -496,7 +496,7 @@ const openEventDetails = (eventData) => {
   $('#detailGuests').innerHTML = '';
   const guests = eventData.guests || [];
   const responses = eventData.responses || [];
-  const isOwner = Boolean(authUser && eventData.ownerId === authUser.id);
+  const isOwner = ownerView;
   $('#detailGuestsTab').classList.toggle('hidden', !isOwner);
   $('#detailStatsTab').classList.toggle('hidden', !isOwner);
   $('#openResponseFromDetails').classList.toggle('hidden', Boolean(isOwner));
@@ -553,7 +553,7 @@ const openEventDetails = (eventData) => {
 
 const openSavedEvent = async (eventId) => {
   try {
-    openEventDetails(await apiRequest(`/events?id=${encodeURIComponent(eventId)}`));
+    openEventDetails(await apiRequest(`/events?id=${encodeURIComponent(eventId)}`), true);
   } catch {
     toast('\u05dc\u05d0 \u05d4\u05e6\u05dc\u05d7\u05e0\u05d5 \u05dc\u05d8\u05e2\u05d5\u05df \u05d0\u05ea \u05d4\u05d0\u05d9\u05e8\u05d5\u05e2.');
   }
@@ -578,7 +578,7 @@ $('#ownedEvents').onclick = (event) => {
     openSavedEvent(card.dataset.eventId);
     return;
   }
-  openEventDetails({ title: card.querySelector('h3').textContent, options: choices, guests: [] });
+  openEventDetails({ title: card.querySelector('h3').textContent, options: choices, guests: [] }, true);
 };
 
 $('#ownedEvents').onkeydown = (event) => {

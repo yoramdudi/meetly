@@ -4,7 +4,8 @@ const assert = require('node:assert/strict');
 
 const {
   isoDate, daysFromNow, today, deadlinePassed, dateBadge, readableChoiceDate,
-  meetingMinutes, durationLabel, calendarStamp, calendarRange, normalizePhone
+  meetingMinutes, durationLabel, calendarStamp, calendarRange, normalizePhone,
+  guestContactValid, applyGuestEdit, guestsCarryTokens
 } = require('../lib.js');
 
 test('durationLabel formats the stored minute count', () => {
@@ -123,4 +124,78 @@ test('readableChoiceDate returns weekday, day and month', () => {
 
 test('readableChoiceDate falls back to the raw value', () => {
   assert.deepEqual(readableChoiceDate('nope'), { day: 'nope', number: '', month: '' });
+});
+
+// --- correcting a guest's contact details ------------------------------------
+// The invariant these guard: an edit may change name/phone/email and nothing else.
+// Rotating inviteToken would kill an invite link already sent; changing id would
+// orphan the answer stored against that guest.
+
+const GUESTS = () => [
+  { id: 'g1', inviteToken: 'tok-1', name: 'דנה', phone: '972541111111', email: 'dana@example.com' },
+  { id: 'g2', inviteToken: 'tok-2', name: 'יוסי', phone: '972542222222', email: '' }
+];
+
+test('applyGuestEdit preserves id and inviteToken', () => {
+  const edited = applyGuestEdit(GUESTS(), 1, { name: 'יוסי כהן', phone: '972543333333', email: 'yossi@example.com' });
+  assert.equal(edited[1].id, 'g2', 'id must survive - it keys the stored response');
+  assert.equal(edited[1].inviteToken, 'tok-2', 'token must survive - it is in the link already sent');
+});
+
+test('applyGuestEdit replaces exactly the three editable fields', () => {
+  const edited = applyGuestEdit(GUESTS(), 1, { name: 'יוסי כהן', phone: '972543333333', email: 'yossi@example.com' });
+  assert.deepEqual(edited[1], {
+    id: 'g2', inviteToken: 'tok-2', name: 'יוסי כהן', phone: '972543333333', email: 'yossi@example.com'
+  });
+});
+
+test('applyGuestEdit leaves the other guests byte-identical', () => {
+  const before = GUESTS();
+  const edited = applyGuestEdit(before, 1, { name: 'x', phone: '972540000000', email: '' });
+  assert.deepEqual(edited[0], GUESTS()[0]);
+});
+
+test('applyGuestEdit does not mutate the input array', () => {
+  const before = GUESTS();
+  applyGuestEdit(before, 0, { name: 'changed', phone: '', email: 'c@example.com' });
+  assert.deepEqual(before, GUESTS(), 'the caller still holds the pre-edit state');
+});
+
+test('applyGuestEdit is a no-op for an out-of-range index', () => {
+  assert.deepEqual(applyGuestEdit(GUESTS(), 7, { name: 'x', phone: 'y', email: 'z' }), GUESTS());
+});
+
+test('applyGuestEdit tolerates a missing guest list', () => {
+  assert.deepEqual(applyGuestEdit(null, 0, { name: 'x', phone: '', email: '' }), []);
+});
+
+test('applyGuestEdit can clear one channel while keeping the other', () => {
+  // Fixing a typo often means deleting a wrong e-mail and relying on the phone.
+  const edited = applyGuestEdit(GUESTS(), 0, { name: 'דנה', phone: '972541111111', email: '' });
+  assert.equal(edited[0].email, '');
+  assert.equal(edited[0].phone, '972541111111');
+  assert.equal(edited[0].inviteToken, 'tok-1');
+});
+
+test('guestsCarryTokens accepts a fully loaded list', () => {
+  assert.equal(guestsCarryTokens(GUESTS()), true);
+});
+
+test('guestsCarryTokens rejects lists an edit would corrupt', () => {
+  // invited_event returns names only, so this is what an invitee's copy looks like.
+  assert.equal(guestsCarryTokens([{ name: 'דנה' }]), false);
+  assert.equal(guestsCarryTokens([{ id: 'g1', name: 'דנה' }]), false, 'missing token');
+  assert.equal(guestsCarryTokens([{ inviteToken: 't', name: 'דנה' }]), false, 'missing id');
+  assert.equal(guestsCarryTokens([]), false);
+  assert.equal(guestsCarryTokens(null), false);
+  assert.equal(guestsCarryTokens(undefined), false);
+});
+
+test('guestContactValid requires a name and one channel', () => {
+  assert.equal(guestContactValid({ name: 'דנה', phone: '972541111111', email: '' }), true);
+  assert.equal(guestContactValid({ name: 'דנה', phone: '', email: 'd@example.com' }), true);
+  assert.equal(guestContactValid({ name: 'דנה', phone: '', email: '' }), false, 'no way to reach them');
+  assert.equal(guestContactValid({ name: '', phone: '972541111111', email: '' }), false, 'no name');
+  assert.equal(guestContactValid({ name: '   ', phone: '972541111111', email: '' }), false, 'blank name');
+  assert.equal(guestContactValid({}), false);
 });

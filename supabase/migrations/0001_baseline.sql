@@ -54,17 +54,35 @@ create index if not exists responses_event_id_idx on public.responses (event_id)
 -- guests[].id, but it never invents either value -- both are minted here so a token
 -- is never chosen by, or visible to, another client.
 
+-- On UPDATE the token is taken from the row as it already stands, never from the
+-- request. The organizer can correct a guest's name, phone or e-mail; they cannot
+-- rotate a token, because that would silently kill an invite link already sent and
+-- orphan any answer stored against that guest id.
 create or replace function public.stamp_guest_tokens()
 returns trigger
 language plpgsql
 as $$
+declare
+  stored_tokens jsonb := '{}'::jsonb;
 begin
+  if tg_op = 'UPDATE' then
+    select coalesce(jsonb_object_agg(g ->> 'id', g ->> 'inviteToken'), '{}'::jsonb)
+      into stored_tokens
+      from jsonb_array_elements(coalesce(old.guests, '[]'::jsonb)) g
+     where g ->> 'id' is not null
+       and g ->> 'inviteToken' is not null;
+  end if;
+
   new.guests := (
     select coalesce(
       jsonb_agg(
         guest || jsonb_build_object(
-          'id',          coalesce(guest ->> 'id',          gen_random_uuid()::text),
-          'inviteToken', coalesce(guest ->> 'inviteToken', encode(gen_random_bytes(16), 'hex'))
+          'id', coalesce(guest ->> 'id', gen_random_uuid()::text),
+          'inviteToken', coalesce(
+            stored_tokens ->> (guest ->> 'id'),  -- known guest: keep the stored token
+            guest ->> 'inviteToken',             -- carried over on insert
+            encode(gen_random_bytes(16), 'hex')  -- genuinely new guest: mint one
+          )
         )
         order by ord
       ),

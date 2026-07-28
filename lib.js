@@ -99,8 +99,29 @@
     return digits;                                        // assume a country code is present
   };
 
+  // ---------------------------------------------------------------- guests
+
+  // A guest needs a name plus at least one way to reach them.
+  const guestContactValid = ({ name, phone, email }) => Boolean(String(name || '').trim())
+    && Boolean(String(phone || '').trim() || String(email || '').trim());
+
+  // Correcting a guest's contact details must never touch `id` or `inviteToken`:
+  // the id keys that guest's stored response, and the token is embedded in every
+  // invite link already sent. Only the three editable fields are replaced.
+  const applyGuestEdit = (guests, index, patch) => (guests || []).map((guest, position) => (
+    position === index
+      ? { ...guest, name: patch.name, phone: patch.phone, email: patch.email }
+      : guest
+  ));
+
+  // True when every guest carries the server-minted fields an edit must preserve.
+  const guestsCarryTokens = (guests) => Array.isArray(guests)
+    && guests.length > 0
+    && guests.every((guest) => Boolean(guest?.id) && Boolean(guest?.inviteToken));
+
   return {
     isoDate, daysFromNow, today, deadlinePassed, dateBadge, readableChoiceDate,
-    meetingMinutes, durationLabel, calendarStamp, calendarRange, normalizePhone
+    meetingMinutes, durationLabel, calendarStamp, calendarRange, normalizePhone,
+    guestContactValid, applyGuestEdit, guestsCarryTokens
   };
 }));

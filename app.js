@@ -5,7 +5,8 @@ const $$ = (selector) => document.querySelectorAll(selector);
 // under Node. Destructured here to keep the call sites below unqualified.
 const {
   daysFromNow, deadlinePassed, dateBadge, readableChoiceDate,
-  meetingMinutes, durationLabel, calendarRange, normalizePhone
+  meetingMinutes, durationLabel, calendarRange, normalizePhone,
+  guestContactValid, applyGuestEdit, guestsCarryTokens
 } = window.MeetlyLib;
 
 // Every element in this file is built through the DOM rather than from an HTML
@@ -192,8 +193,13 @@ const apiRequest = async (path, options = {}) => {
   if (path.startsWith('/events?') && method === 'DELETE') return MeetlyData.deleteEvent(id);
   if (path.startsWith('/events?') && method === 'PATCH') {
     const body = JSON.parse(options.body);
-    // Only the index is stored; the client derives the option from it (see mapEvent).
-    const updated = await MeetlyData.updateEvent(id, { final_selection: { index: body.selectedOptionIndex }, finalized_at: new Date().toISOString() });
+    // Two organizer edits share this route: correcting guest contact details, and
+    // locking the final slot. For the latter only the index is stored; the client
+    // derives the option from it (see mapEvent).
+    const patch = body.guests
+      ? { guests: body.guests }
+      : { final_selection: { index: body.selectedOptionIndex }, finalized_at: new Date().toISOString() };
+    const updated = await MeetlyData.updateEvent(id, patch);
     if (updated) updated.responses = await MeetlyData.responses(id);
     return updated;
   }
@@ -646,10 +652,107 @@ const markSent = (button) => {
   button.textContent = `✓ ${button.textContent}`;
 };
 
-$('#detailGuests').onclick = (event) => {
-  const button = event.target.closest('[data-send]');
-  if (!button || !activeEvent) return;
+// Guest rows are rendered from activeEvent so a contact correction can redraw just this
+// list, without reloading the event or reopening the modal.
+let detailsIsOwner = false;
+let editingGuestIndex = null;
+
+const guestDisplayRow = (guest, guestIndex, response, isFinalized) => {
+  const item = el('div', { text: `${guest.name} · ${response ? 'השיב/ה' : 'טרם השיב/ה'}` });
+  if (guest.phone) item.append(el('br'), `טלפון: ${guest.phone}`);
+  if (guest.email) item.append(el('br'), `אימייל: ${guest.email}`);
+  if (!detailsIsOwner) return item;
   // Index rather than guest.id: ids are assigned server-side and may be absent.
+  const ref = { guestIndex: String(guestIndex) };
+  if (guest.phone) {
+    item.append(' ', el('button', {
+      type: 'button', class: 'text-button',
+      dataset: { ...ref, send: 'phone', action: isFinalized ? 'final' : (response ? 'resend' : 'reminder') },
+      text: isFinalized ? 'שליחת הזימון בוואטסאפ' : (response ? 'שלח שוב לטלפון' : 'שלח תזכורת לטלפון')
+    }));
+  }
+  if (guest.email) {
+    item.append(' ', el('button', {
+      type: 'button', class: 'text-button', dataset: { ...ref, send: 'email' }, text: 'שליחה באימייל'
+    }));
+  }
+  item.append(' ', el('button', {
+    type: 'button', class: 'text-button', dataset: { ...ref, guestEdit: '1' }, text: '✎ תיקון פרטים'
+  }));
+  return item;
+};
+
+const guestEditRow = (guest, guestIndex) => el('div', { class: 'guest-edit', dataset: { guestForm: String(guestIndex) } }, [
+  el('span', { class: 'guest-edit-title', text: 'תיקון פרטי מוזמן' }),
+  el('input', { class: 'guest-edit-name', value: guest.name || '', placeholder: 'שם מלא', 'aria-label': 'שם המוזמן' }),
+  el('input', { class: 'guest-edit-phone', type: 'tel', inputMode: 'tel', value: guest.phone || '', placeholder: 'מספר טלפון', 'aria-label': 'מספר טלפון' }),
+  el('input', { class: 'guest-edit-email', type: 'email', value: guest.email || '', placeholder: 'כתובת אימייל', 'aria-label': 'כתובת אימייל' }),
+  el('div', { class: 'guest-edit-actions' }, [
+    el('button', { type: 'button', class: 'text-button', dataset: { guestSave: String(guestIndex) }, text: 'שמירה' }),
+    el('button', { type: 'button', class: 'text-button', dataset: { guestCancel: '1' }, text: 'ביטול' })
+  ]),
+  el('p', { class: 'guest-edit-note', text: 'קוד ההזמנה נשמר, כך שתשובות שכבר התקבלו לא נאבדות. אחרי תיקון יש לשלוח את ההזמנה שוב.' })
+]);
+
+const renderGuestList = () => {
+  const container = clear($('#detailGuests'));
+  const guests = activeEvent?.guests || [];
+  if (!guests.length) { container.textContent = 'אין פרטי מוזמנים'; return; }
+  const responses = activeEvent?.responses || [];
+  const isFinalized = Boolean(activeEvent?.finalSelection);
+  guests.forEach((guest, guestIndex) => {
+    container.append(editingGuestIndex === guestIndex
+      ? guestEditRow(guest, guestIndex)
+      : guestDisplayRow(guest, guestIndex, responses.find((saved) => saved.guestId === guest.id), isFinalized));
+  });
+};
+
+const saveGuestEdit = async (guestIndex) => {
+  const form = $(`[data-guest-form="${guestIndex}"]`);
+  if (!activeEvent || !form) return;
+  const name = form.querySelector('.guest-edit-name').value.trim();
+  const phone = normalizePhone(form.querySelector('.guest-edit-phone').value);
+  const email = form.querySelector('.guest-edit-email').value.trim();
+  if (!guestContactValid({ name, phone, email })) {
+    toast('יש למלא שם, ולפחות טלפון או אימייל.');
+    return;
+  }
+  // An edit must carry id and inviteToken back unchanged. If the loaded event lacks
+  // them, refuse rather than send a request that would rotate a live invite token and
+  // orphan the answer stored against that guest id.
+  if (!guestsCarryTokens(activeEvent.guests)) {
+    toast('פרטי המוזמנים לא נטענו במלואם. רענן/י את הדף לפני עריכה.');
+    return;
+  }
+  const saveButton = form.querySelector('[data-guest-save]');
+  saveButton.disabled = true;
+  const guests = applyGuestEdit(activeEvent.guests, guestIndex, { name, phone, email });
+  try {
+    const updated = await apiRequest(`/events?id=${encodeURIComponent(activeEvent.id)}`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ guests })
+    });
+    if (!updated) throw new Error('הפרטים לא נשמרו. נסה/י שוב.');
+    activeEvent = updated;
+    editingGuestIndex = null;
+    renderGuestList();
+    toast('הפרטים עודכנו. שלחו את ההזמנה שוב לפרטים החדשים.');
+  } catch (error) {
+    toast(error.message || 'לא הצלחנו לעדכן את פרטי המוזמן.');
+    saveButton.disabled = false;
+  }
+};
+
+$('#detailGuests').onclick = (event) => {
+  if (!activeEvent) return;
+
+  const editButton = event.target.closest('[data-guest-edit]');
+  if (editButton) { editingGuestIndex = Number(editButton.dataset.guestIndex); renderGuestList(); return; }
+  if (event.target.closest('[data-guest-cancel]')) { editingGuestIndex = null; renderGuestList(); return; }
+  const saveButton = event.target.closest('[data-guest-save]');
+  if (saveButton) { saveGuestEdit(Number(saveButton.dataset.guestSave)); return; }
+
+  const button = event.target.closest('[data-send]');
+  if (!button) return;
   const guest = activeEvent.guests[Number(button.dataset.guestIndex)];
   if (!guest) return;
   if (button.dataset.send === 'email') sendEmailInvite(activeEvent, guest);
@@ -697,35 +800,9 @@ const openEventDetails = (eventData, ownerView = Boolean(authUser && eventData.o
       stats.append(item);
     });
   }
-  if (!guests.length) $('#detailGuests').textContent = 'אין פרטי מוזמנים';
-  const isFinalized = Boolean(eventData.finalSelection);
-  guests.forEach((guest, guestIndex) => {
-    const item = document.createElement('div');
-    const response = responses.find((savedResponse) => savedResponse.guestId === guest.id);
-    item.textContent = `${guest.name} · ${response ? 'השיב/ה' : 'טרם השיב/ה'}`;
-    if (guest.phone) item.append(document.createElement('br'), `טלפון: ${guest.phone}`);
-    if (guest.email) item.append(document.createElement('br'), `אימייל: ${guest.email}`);
-    if (isOwner) {
-      if (guest.phone) {
-        const phoneButton = document.createElement('button');
-        // Index rather than guest.id: ids are assigned server-side and may be absent.
-        phoneButton.type = 'button'; phoneButton.className = 'text-button'; phoneButton.dataset.guestIndex = String(guestIndex);
-        phoneButton.dataset.send = 'phone';
-        phoneButton.dataset.action = isFinalized ? 'final' : (response ? 'resend' : 'reminder');
-        phoneButton.textContent = isFinalized
-          ? 'שליחת הזימון בוואטסאפ'
-          : (response ? 'שלח שוב לטלפון' : 'שלח תזכורת לטלפון');
-        item.append(' ', phoneButton);
-      }
-      if (guest.email) {
-        const emailButton = document.createElement('button');
-        emailButton.type = 'button'; emailButton.className = 'text-button'; emailButton.dataset.guestIndex = String(guestIndex);
-        emailButton.dataset.send = 'email'; emailButton.textContent = 'שליחה באימייל';
-        item.append(' ', emailButton);
-      }
-    }
-    $('#detailGuests').append(item);
-  });
+  detailsIsOwner = isOwner;
+  editingGuestIndex = null;
+  renderGuestList();
   show(detailsModal);
 };
 

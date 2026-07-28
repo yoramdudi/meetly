@@ -7,16 +7,13 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <link rel="manifest" href="manifest.webmanifest" />
-    <link rel="apple-touch-icon" href="icons/meetly-icon.svg" />
+    <link rel="icon" href="icons/meetly-icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
     <title>Meetly — מתאמים פגישה בקלות</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,700;0,800;1,700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="styles.css" />
-    <link rel="stylesheet" href="response.css" />
-    <link rel="stylesheet" href="response-enhanced.css" />
-    <link rel="stylesheet" href="mobile.css" />
-    <style>.event-card{cursor:pointer}.event-card:focus{outline:3px solid #b9adff;outline-offset:2px}.detail-section{display:grid;gap:8px;margin-top:18px}.detail-list{display:grid;gap:7px}.detail-list>div{padding:9px 11px;background:#f7f6fb;border-radius:8px;color:#4b5368;font-size:13px}.detail-tabs{display:flex;gap:6px;border-bottom:1px solid #e4e1ed;margin-top:20px}.detail-tab{border:0;background:transparent;padding:10px 12px;color:#73788a;font:inherit;font-weight:700;cursor:pointer;border-bottom:3px solid transparent}.detail-tab.active{color:#624fe6;border-color:#624fe6}.detail-panel[hidden]{display:none}.empty-events{grid-column:1/-1;background:#fff;border:1px dashed #d8d5e5;border-radius:14px;padding:30px;text-align:center;color:var(--muted)}.wizard-step{gap:15px}.wizard-actions{display:flex;gap:10px;align-items:center}.wizard-actions .primary{margin-inline-start:auto}</style>
   </head>
   <body>
     <aside class="sidebar">
@@ -33,7 +30,7 @@
       </div>
     </aside>
     <main>
-      <header><div><p class="eyebrow">יום שלישי, 18 ביולי</p><h1 id="greeting">ברוכים הבאים <span>✦</span></h1></div><div class="header-actions"><button class="text-button mobile-menu" id="mobileMenu" type="button">☰ תפריט</button><button class="primary" id="createButton">＋ יצירת אירוע</button></div></header>
+      <header><div><p class="eyebrow" id="todayLabel"></p><h1 id="greeting">ברוכים הבאים <span>✦</span></h1></div><div class="header-actions"><button class="text-button mobile-menu" id="mobileMenu" type="button">☰ תפריט</button><button class="primary" id="createButton">＋ יצירת אירוע</button></div></header>
       <section id="overview" class="hero-card">
         <div class="hero-copy"><p class="eyebrow accent">ניהול פגישות</p><h2>מוכנים לתאם<br />את הפגישה הבאה?</h2><div class="hero-meta"><span>צרו אירוע, הזמינו משתתפים וקבלו תשובות במקום אחד.</span></div></div>
       </section>
@@ -43,21 +40,22 @@
       <section class="event-grid hidden" id="invitedGrid"></section>
     </main>
     <div class="modal-backdrop hidden" id="modalBackdrop"></div>
-    <section class="modal hidden" id="eventModal" aria-label="יצירת אירוע">
-      <button class="close" id="closeModal">×</button>
+    <section class="modal hidden" id="eventModal" role="dialog" aria-modal="true" aria-label="יצירת אירוע">
+      <button class="close" id="closeModal" aria-label="סגירה">×</button>
       <div class="modal-intro"><span class="step-pill">שלב 1 מתוך 3</span><h2>בואו נתאם משהו טוב</h2><p>הוסיפו פרטים, בחרו זמנים ונשלח לכולם ב-WhatsApp.</p></div>
       <form id="eventForm">
-        <label>שם האירוע<input id="eventName" value="פגישת תכנון חדשה" required /></label>
-        <div class="form-row"><label>משך הפגישה<select id="duration"><option>30 דקות</option><option selected>45 דקות</option><option>שעה</option><option>90 דקות</option></select></label><label>סגירת הבחירה<input id="deadline" type="date" value="2026-07-20" /></label></div>
+        <label>שם האירוע<input id="eventName" placeholder="למשל: פגישת תכנון" required /></label>
+        <div class="form-row"><label>משך הפגישה<select id="duration"><option value="30">30 דקות</option><option value="45" selected>45 דקות</option><option value="60">שעה</option><option value="90">90 דקות</option></select></label><label>סגירת הבחירה<input id="deadline" type="date" /></label></div>
         <div class="guest-options"><div class="options-title"><b>מוזמנים</b><button type="button" id="addGuest">＋ הוספת מוזמן</button></div><div id="guestList"><div class="time-row guest-row"><input class="guest-name" placeholder="שם מלא" aria-label="שם המוזמן" /><input class="guest-phone" type="tel" inputmode="tel" placeholder="מספר טלפון" aria-label="מספר טלפון" /><input class="guest-email" type="email" placeholder="כתובת אימייל" aria-label="כתובת אימייל" /><button type="button" class="remove-time remove-guest" aria-label="הסרת מוזמן">×</button></div></div></div>
-        <div class="time-options"><div class="options-title"><b>אפשרויות זמן</b><button type="button" id="addTime">＋ הוספת זמן</button></div><div id="timeList"><div class="time-row"><input type="date" value="2026-07-22" /><input type="time" value="10:00" /><button type="button" class="remove-time">×</button></div><div class="time-row"><input type="date" value="2026-07-22" /><input type="time" value="14:00" /><button type="button" class="remove-time">×</button></div></div></div>
+        <div class="time-options"><div class="options-title"><b>אפשרויות זמן</b><button type="button" id="addTime">＋ הוספת זמן</button></div><div id="timeList"><div class="time-row"><input type="date" aria-label="תאריך" /><input type="time" value="10:00" aria-label="שעה" /><button type="button" class="remove-time" aria-label="הסרת זמן">×</button></div><div class="time-row"><input type="date" aria-label="תאריך" /><input type="time" value="14:00" aria-label="שעה" /><button type="button" class="remove-time" aria-label="הסרת זמן">×</button></div></div></div>
         <button class="primary submit" type="submit">יצירה ושליחה ב-WhatsApp ←</button>
       </form>
     </section>
-    <section class="modal hidden response-modal" id="responseModal"><button class="close" id="closeResponse">×</button><div class="response-header"><span class="brand-mark">m</span><p class="invite-label">הוזמנת לפגישה</p><h2>פרטי האירוע</h2><div class="meeting-info"><span>◷</span><i></i><span>♙ מאת המארגן</span></div></div><div class="response-title"><div><b>איזה זמן מתאים לך?</b><span>אפשר לבחור לכל אחת מהאפשרויות</span></div><span id="answerCount">0/3</span></div><div class="choice-list" id="choiceList"></div><button class="primary submit" id="saveResponse">שמירת הבחירות</button><p class="privacy-note">הבחירות שלך גלויות למארגן בלבד</p></section>
-    <section class="modal hidden details-modal" id="eventDetails"><button class="close" id="closeDetails">×</button><div class="modal-intro"><span class="step-pill">פרטי אירוע</span><h2 id="detailTitle"></h2></div><div class="detail-tabs" role="tablist" aria-label="תפריט פרטי אירוע"><button class="detail-tab active" type="button" role="tab" data-details-tab="details">פרטים וזמנים</button><button class="detail-tab" id="detailGuestsTab" type="button" role="tab" data-details-tab="guests">מוזמנים</button><button class="detail-tab" id="detailStatsTab" type="button" role="tab" data-details-tab="stats">מצב בחירות</button></div><div class="detail-panel" data-details-panel="details"><div class="detail-section"><b>משך הפגישה</b><div id="detailDuration" class="detail-list"></div></div><div class="detail-section"><b>אפשרויות זמן</b><div id="detailOptions" class="detail-list"></div></div></div><div class="detail-panel" data-details-panel="guests" hidden><div class="detail-section"><b>מוזמנים</b><div id="detailGuests" class="detail-list"></div></div></div><div class="detail-panel" data-details-panel="stats" hidden><div class="detail-section"><b>מצב בחירות</b><div id="detailStats" class="detail-list"></div></div></div><button class="primary submit" id="openResponseFromDetails">בחירת זמינות</button></section>
-    <section class="modal hidden" id="profileModal" aria-label="פרופיל מארגן"><div class="modal-intro"><span class="step-pill">הגדרת פרופיל</span><h2>איך לפנות אליך?</h2><p>הפרטים יופיעו בכל הזמנה שתשלח/י.</p></div><form id="profileForm"><label>שם מלא<input id="profileNameInput" required /></label><label>מספר טלפון<input id="profilePhoneInput" type="tel" inputmode="tel" placeholder="0541234567" required /></label><button class="primary submit" type="submit">שמירת פרטים</button></form></section>
-    <div class="toast hidden" id="toast"></div>
+    <section class="modal hidden response-modal" id="responseModal" role="dialog" aria-modal="true" aria-label="בחירת זמינות"><button class="close" id="closeResponse" aria-label="סגירה">×</button><div class="response-header"><span class="brand-mark">m</span><p class="invite-label">הוזמנת לפגישה</p><h2>פרטי האירוע</h2><div class="meeting-info"><span>◷</span><i></i><span>♙ מאת המארגן</span></div></div><div class="response-title"><div><b>איזה זמן מתאים לך?</b><span>אפשר לבחור לכל אחת מהאפשרויות</span></div><span id="answerCount"></span></div><div class="choice-list" id="choiceList"></div><button class="primary submit" id="saveResponse">שמירת הבחירות</button><p class="privacy-note">הבחירות שלך גלויות למארגן בלבד</p></section>
+    <section class="modal hidden details-modal" id="eventDetails" role="dialog" aria-modal="true" aria-label="פרטי אירוע"><button class="close" id="closeDetails" aria-label="סגירה">×</button><div class="modal-intro"><span class="step-pill">פרטי אירוע</span><h2 id="detailTitle"></h2></div><div class="detail-tabs" role="tablist" aria-label="תפריט פרטי אירוע"><button class="detail-tab active" type="button" role="tab" data-details-tab="details">פרטים וזמנים</button><button class="detail-tab" id="detailGuestsTab" type="button" role="tab" data-details-tab="guests">מוזמנים</button><button class="detail-tab" id="detailStatsTab" type="button" role="tab" data-details-tab="stats">מצב בחירות</button></div><div class="detail-panel" data-details-panel="details"><div class="detail-section"><b>משך הפגישה</b><div id="detailDuration" class="detail-list"></div></div><div class="detail-section"><b>אפשרויות זמן</b><div id="detailOptions" class="detail-list"></div></div></div><div class="detail-panel" data-details-panel="guests" hidden><div class="detail-section"><b>מוזמנים</b><div id="detailGuests" class="detail-list"></div></div></div><div class="detail-panel" data-details-panel="stats" hidden><div class="detail-section"><b>מצב בחירות</b><div id="detailStats" class="detail-list"></div></div></div><button class="primary submit" id="openResponseFromDetails">בחירת זמינות</button></section>
+    <section class="modal hidden" id="profileModal" role="dialog" aria-modal="true" aria-label="פרופיל מארגן"><div class="modal-intro"><span class="step-pill">הגדרת פרופיל</span><h2>איך לפנות אליך?</h2><p>הפרטים יופיעו בכל הזמנה שתשלח/י.</p></div><form id="profileForm"><label>שם מלא<input id="profileNameInput" required /></label><label>מספר טלפון<input id="profilePhoneInput" type="tel" inputmode="tel" placeholder="0541234567" required /></label><button class="primary submit" type="submit">שמירת פרטים</button></form></section>
+    <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
+  <script src="lib.js"></script>
   <script src="supabase-config.js"></script>
   <script src="supabase-client.js"></script>
   <script src="app.js"></script>

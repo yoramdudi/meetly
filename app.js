@@ -1,35 +1,89 @@
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => document.querySelectorAll(selector);
+
+// Pure date/duration/phone helpers live in lib.js so the test suite can exercise them
+// under Node. Destructured here to keep the call sites below unqualified.
+const {
+  daysFromNow, deadlinePassed, dateBadge, readableChoiceDate,
+  meetingMinutes, durationLabel, calendarRange, normalizePhone
+} = window.MeetlyLib;
+
+// Every element in this file is built through the DOM rather than from an HTML
+// string, so no markup is ever parsed and untrusted values cannot become elements.
+const el = (tag, props = {}, children = []) => {
+  const node = document.createElement(tag);
+  Object.entries(props).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === false) return;
+    if (key === 'class') node.className = value;
+    else if (key === 'text') node.textContent = value;
+    else if (key === 'style') Object.assign(node.style, value);
+    else if (key === 'dataset') Object.assign(node.dataset, value);
+    else if (key in node) node[key] = value;
+    else node.setAttribute(key, value);
+  });
+  node.append(...children.filter(Boolean));
+  return node;
+};
+const clear = (node) => { node.textContent = ''; return node; };
+
 const APP_VERSION = '1.1.0';
-$('#appVersion').textContent = `\u05d2\u05e8\u05e1\u05d4 ${APP_VERSION}`;
+$('#appVersion').textContent = `גרסה ${APP_VERSION}`;
 const modal = $('#eventModal');
 const backdrop = $('#modalBackdrop');
 const responseModal = $('#responseModal');
 const detailsModal = $('#eventDetails');
 const profileModal = $('#profileModal');
-const authModal = document.createElement('section');
-authModal.className = 'modal hidden';
-authModal.id = 'authModal';
-authModal.innerHTML = '<div class="modal-intro"><span class="step-pill">\u05d4\u05e8\u05e9\u05de\u05d4 \u05d5\u05d4\u05ea\u05d7\u05d1\u05e8\u05d5\u05ea</span><h2>\u05dc\u05e0\u05d4\u05dc \u05d0\u05d9\u05e8\u05d5\u05e2\u05d9\u05dd \u05d1\u05d0\u05d5\u05e4\u05df \u05d1\u05d8\u05d5\u05d7</h2><p id="authHint">\u05d4\u05ea\u05d7\u05d1\u05e8\u05d5 \u05d0\u05d5 \u05e4\u05ea\u05d7\u05d5 \u05d7\u05e9\u05d1\u05d5\u05df \u05d7\u05d3\u05e9.</p></div><button class="text-button" id="googleLogin" type="button" style="width:100%;border:1px solid #ddd8f0;border-radius:9px;padding:12px">G \u05d4\u05ea\u05d7\u05d1\u05e8\u05d5\u05ea \u05e2\u05dd Google</button><p style="text-align:center;color:#8a8fa0;margin:12px 0">\u05d0\u05d5</p><form id="authForm"><label id="authNameLabel">\u05e9\u05dd \u05de\u05dc\u05d0<input id="authName" autocomplete="name" /></label><label>\u05d3\u05d5\u05d0\u05f4\u05dc<input id="authEmail" type="email" autocomplete="email" required /></label><label>\u05e1\u05d9\u05e1\u05de\u05d4<input id="authPassword" type="password" autocomplete="current-password" minlength="8" required /></label><button class="primary submit" id="authSubmit" type="submit">\u05d4\u05ea\u05d7\u05d1\u05e8\u05d5\u05ea</button><button class="text-button" id="authToggle" type="button">\u05dc\u05d9\u05e6\u05d9\u05e8\u05ea \u05d7\u05e9\u05d1\u05d5\u05df \u05d7\u05d3\u05e9</button></form>';
+const modalIntro = (pill, heading, note) => el('div', { class: 'modal-intro' }, [
+  el('span', { class: 'step-pill', text: pill }),
+  el('h2', { text: heading }),
+  note
+]);
+
+const authModal = el('section', { class: 'modal hidden', id: 'authModal', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'הרשמה והתחברות' }, [
+  modalIntro('הרשמה והתחברות', 'לנהל אירועים באופן בטוח', el('p', { id: 'authHint', text: 'התחברו או פתחו חשבון חדש.' })),
+  el('button', { type: 'button', class: 'text-button', id: 'googleLogin', text: 'G התחברות עם Google',
+    style: { width: '100%', border: '1px solid #ddd8f0', borderRadius: '9px', padding: '12px' } }),
+  el('p', { text: 'או', style: { textAlign: 'center', color: '#8a8fa0', margin: '12px 0' } }),
+  el('form', { id: 'authForm' }, [
+    el('label', { id: 'authNameLabel', text: 'שם מלא' }, [el('input', { id: 'authName', autocomplete: 'name' })]),
+    el('label', { text: 'דוא״ל' }, [el('input', { id: 'authEmail', type: 'email', autocomplete: 'email', required: true })]),
+    el('label', { text: 'סיסמה' }, [el('input', { id: 'authPassword', type: 'password', autocomplete: 'current-password', minLength: 8, required: true })]),
+    el('button', { type: 'submit', class: 'primary submit', id: 'authSubmit', text: 'התחברות' }),
+    el('button', { type: 'button', class: 'text-button', id: 'authToggle', text: 'ליצירת חשבון חדש' })
+  ])
+]);
 document.body.insertBefore(authModal, $('#toast'));
-const inviteAccessModal = document.createElement('section');
-inviteAccessModal.className = 'modal hidden';
-inviteAccessModal.id = 'inviteAccessModal';
-inviteAccessModal.innerHTML = '<div class="modal-intro"><span class="step-pill">\u05d4\u05d5\u05d6\u05de\u05e0\u05ea \u05dc\u05d0\u05d9\u05e8\u05d5\u05e2</span><h2>\u05d0\u05d9\u05da \u05d4\u05d9\u05d9\u05ea \u05e8\u05d5\u05e6\u05d4 \u05dc\u05d4\u05de\u05e9\u05d9\u05da?</h2><p>\u05d0\u05e4\u05e9\u05e8 \u05dc\u05d4\u05e9\u05d9\u05d1 \u05db\u05d0\u05d5\u05e8\u05d7/\u05ea \u05d0\u05d5 \u05dc\u05d4\u05d9\u05e8\u05e9\u05dd \u05db\u05d3\u05d9 \u05dc\u05e0\u05d4\u05dc \u05d0\u05d9\u05e8\u05d5\u05e2\u05d9\u05dd \u05d1\u05e2\u05ea\u05d9\u05d3.</p></div><button class="primary submit" id="continueGuest" type="button">\u05d4\u05de\u05e9\u05da \u05db\u05d0\u05d5\u05e8\u05d7/\u05ea</button><button class="text-button" id="inviteSignup" type="button" style="width:100%;margin-top:10px">\u05d4\u05ea\u05d7\u05d1\u05e8\u05d5\u05ea / \u05d4\u05e8\u05e9\u05de\u05d4</button>';
+
+const inviteAccessModal = el('section', { class: 'modal hidden', id: 'inviteAccessModal', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'הוזמנת לאירוע' }, [
+  modalIntro('הוזמנת לאירוע', 'איך היית רוצה להמשיך?', el('p', { text: 'אפשר להשיב כאורח/ת או להירשם כדי לנהל אירועים בעתיד.' })),
+  el('button', { type: 'button', class: 'primary submit', id: 'continueGuest', text: 'המשך כאורח/ת' }),
+  el('button', { type: 'button', class: 'text-button', id: 'inviteSignup', text: 'התחברות / הרשמה', style: { width: '100%', marginTop: '10px' } })
+]);
 document.body.insertBefore(inviteAccessModal, $('#toast'));
-const finalizeModal = document.createElement('section');
-finalizeModal.className = 'modal hidden';
-finalizeModal.id = 'finalizeModal';
-finalizeModal.innerHTML = '<button class="close" id="closeFinalize">\u00d7</button><div class="modal-intro"><span class="step-pill">\u05e1\u05d2\u05d9\u05e8\u05ea \u05d4\u05d1\u05d7\u05d9\u05e8\u05d4</span><h2>\u05d1\u05d7\u05e8/\u05d9 \u05d0\u05ea \u05d4\u05de\u05d5\u05e2\u05d3 \u05d4\u05e1\u05d5\u05e4\u05d9</h2><p>\u05dc\u05d0\u05d7\u05e8 \u05d4\u05d0\u05d9\u05e9\u05d5\u05e8 \u05ea\u05d9\u05e4\u05ea\u05d7 \u05d4\u05d5\u05d3\u05e2\u05ea WhatsApp \u05e0\u05e4\u05e8\u05d3\u05ea \u05dc\u05db\u05dc \u05de\u05d5\u05d6\u05de\u05df.</p></div><div id="finalizeOptions" class="detail-list"></div><button class="primary submit" id="confirmFinalize" type="button">\u05e1\u05d2\u05d9\u05e8\u05d4 \u05d5\u05e9\u05dc\u05d9\u05d7\u05ea \u05d6\u05d9\u05de\u05d5\u05e0\u05d9\u05dd</button>';
+
+const finalizeModal = el('section', { class: 'modal hidden', id: 'finalizeModal', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'סגירת הבחירה' }, [
+  el('button', { type: 'button', class: 'close', id: 'closeFinalize', 'aria-label': 'סגירה', text: '×' }),
+  modalIntro('סגירת הבחירה', 'בחר/י את המועד הסופי', el('p', { text: 'לאחר האישור תישלח הודעת WhatsApp נפרדת לכל מוזמן, בקליק אחד לכל אחד.' })),
+  el('div', { id: 'finalizeOptions', class: 'detail-list' }),
+  el('button', { type: 'button', class: 'primary submit', id: 'confirmFinalize', text: 'סגירה ושליחת זימונים' })
+]);
 document.body.insertBefore(finalizeModal, $('#toast'));
 const finalizeButton = document.createElement('button');
 finalizeButton.type = 'button';
 finalizeButton.id = 'openFinalize';
 finalizeButton.className = 'primary submit hidden';
-finalizeButton.textContent = '\u05e1\u05d2\u05d9\u05e8\u05ea \u05d1\u05d7\u05d9\u05e8\u05d4 \u05d5\u05e9\u05dc\u05d9\u05d7\u05ea \u05d6\u05d9\u05de\u05d5\u05e0\u05d9\u05dd';
+finalizeButton.textContent = 'סגירת בחירה ושליחת זימונים';
 $('#eventDetails').append(finalizeButton);
+// Opening the calendar is its own click so it cannot be swallowed by the pop-up blocker.
+const calendarButton = document.createElement('button');
+calendarButton.type = 'button';
+calendarButton.id = 'addCalendar';
+calendarButton.className = 'text-button hidden';
+calendarButton.style.width = '100%';
+calendarButton.style.marginTop = '10px';
+calendarButton.textContent = 'הוספה ליומן Google';
+$('#eventDetails').append(calendarButton);
 const api = '/.netlify/functions';
-const ownedEventsKey = 'meetly-owned-events';
 const invitedEventsKey = 'meetly-invited-events';
 const profileKey = 'meetly-profile';
 let activeEvent = null;
@@ -41,13 +95,55 @@ let signupMode = false;
 let finalizeEvent = null;
 let deferredInstallPrompt = null;
 
-const show = (element) => { element.classList.remove('hidden'); backdrop.classList.remove('hidden'); };
-const hide = () => { modal.classList.add('hidden'); responseModal.classList.add('hidden'); detailsModal.classList.add('hidden'); profileModal.classList.add('hidden'); authModal.classList.add('hidden'); inviteAccessModal.classList.add('hidden'); finalizeModal.classList.add('hidden'); backdrop.classList.add('hidden'); };
+const allModals = () => [modal, responseModal, detailsModal, profileModal, authModal, inviteAccessModal, finalizeModal];
+const FOCUSABLE = 'button:not([disabled]):not(.hidden), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+let openModal = null;
+let focusBeforeModal = null;
+
+const show = (element) => {
+  focusBeforeModal = document.activeElement;
+  openModal = element;
+  element.classList.remove('hidden');
+  backdrop.classList.remove('hidden');
+  // Move focus into the dialog so keyboard and screen-reader users land inside it.
+  const first = element.querySelector(FOCUSABLE);
+  if (first) first.focus();
+};
+
+const hide = () => {
+  allModals().forEach((element) => element.classList.add('hidden'));
+  backdrop.classList.add('hidden');
+  openModal = null;
+  // Hand focus back to whatever opened the dialog.
+  if (focusBeforeModal?.isConnected) focusBeforeModal.focus();
+  focusBeforeModal = null;
+};
+
+// Escape closes, and Tab is trapped inside the open dialog rather than wandering
+// into the page behind it.
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    if ($('.sidebar').classList.contains('mobile-open')) { $('.sidebar').classList.remove('mobile-open'); backdrop.classList.add('hidden'); return; }
+    if (openModal) { event.preventDefault(); hide(); }
+    return;
+  }
+  if (event.key !== 'Tab' || !openModal) return;
+  const focusable = [...openModal.querySelectorAll(FOCUSABLE)].filter((node) => node.offsetParent !== null);
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+  else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+});
+
+let toastTimer = null;
 const toast = (message) => {
   const element = $('#toast');
   element.textContent = message;
   element.classList.remove('hidden');
-  setTimeout(() => element.classList.add('hidden'), 3800);
+  // Clear the pending timer, otherwise a second toast is cut short by the first.
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { element.classList.add('hidden'); toastTimer = null; }, 3800);
 };
 
 window.addEventListener('beforeinstallprompt', (event) => {
@@ -63,10 +159,11 @@ $('#installApp').onclick = async () => {
   }
   const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent);
   toast(isIos
-    ? '\u05d1-iPhone: \u05dc\u05d7\u05e6\u05d5 \u05e2\u05dc \u05db\u05e4\u05ea\u05d5\u05e8 \u05e9\u05d9\u05ea\u05d5\u05e3 \u2190 \u201c\u05d4\u05d5\u05e1\u05e4\u05d4 \u05dc\u05de\u05e1\u05da \u05d4\u05d1\u05d9\u05ea\u201d.'
-    : '\u05d1\u05d3\u05e4\u05d3\u05e4\u05df \u05d6\u05d4 \u05d0\u05e4\u05e9\u05e8 \u05dc\u05d4\u05d5\u05e1\u05d9\u05e3 \u05dc\u05de\u05e1\u05da \u05d4\u05d1\u05d9\u05ea \u05de\u05ea\u05e4\u05e8\u05d9\u05d8 \u05d4\u05d3\u05e4\u05d3\u05e4\u05df.');
+    ? 'ב-iPhone: לחצו על כפתור שיתוף ← “הוספה למסך הבית”.'
+    : 'בדפדפן זה אפשר להוסיף למסך הבית מתפריט הדפדפן.');
 };
-if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js').catch(() => {}));
+// Registered relative to the document so the app works under a sub-path deploy (e.g. /meetly/).
+if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('./service-worker.js').catch(() => {}));
 
 const netlifyRequest = async (path, options) => {
   const response = await fetch(`${api}${path}`, options);
@@ -79,38 +176,55 @@ const netlifyRequest = async (path, options) => {
 const apiRequest = async (path, options = {}) => {
   if (!window.MeetlyData) return netlifyRequest(path, options);
   const method = options.method || 'GET';
+  const query = new URLSearchParams(path.split('?')[1] || '');
+  const id = query.get('id');
   if (path === '/events' && method === 'GET') return MeetlyData.events();
-  if (path === '/events' && method === 'POST') return (await MeetlyData.createEvent(JSON.parse(options.body)))[0];
-  if (path.startsWith('/events?id=') && method === 'GET') { const id = new URLSearchParams(path.split('?')[1]).get('id'); const event = await MeetlyData.event(id); if (event) event.responses = await MeetlyData.responses(id); return event; }
-  if (path.startsWith('/events?id=') && method === 'DELETE') { const id = new URLSearchParams(path.split('?')[1]).get('id'); return MeetlyData.deleteEvent(id); }
-  if (path.startsWith('/events?id=') && method === 'PATCH') { const id = new URLSearchParams(path.split('?')[1]).get('id'); const body = JSON.parse(options.body); return (await MeetlyData.updateEvent(id, { final_selection: { index: body.selectedOptionIndex }, finalized_at: new Date().toISOString() }))[0]; }
+  if (path === '/events' && method === 'POST') return MeetlyData.createEvent(JSON.parse(options.body));
+  if (path.startsWith('/events?') && method === 'GET') {
+    // An invite token means the caller is an anonymous guest: RLS blocks a plain
+    // select, so the event has to come back through the token-checking RPC.
+    const invite = query.get('invite');
+    if (invite) return MeetlyData.invitedEvent(id, invite);
+    const event = await MeetlyData.event(id);
+    if (event) event.responses = await MeetlyData.responses(id);
+    return event;
+  }
+  if (path.startsWith('/events?') && method === 'DELETE') return MeetlyData.deleteEvent(id);
+  if (path.startsWith('/events?') && method === 'PATCH') {
+    const body = JSON.parse(options.body);
+    // Only the index is stored; the client derives the option from it (see mapEvent).
+    const updated = await MeetlyData.updateEvent(id, { final_selection: { index: body.selectedOptionIndex }, finalized_at: new Date().toISOString() });
+    if (updated) updated.responses = await MeetlyData.responses(id);
+    return updated;
+  }
   if (path === '/responses' && method === 'POST') { const body = JSON.parse(options.body); return MeetlyData.submitResponse(body.eventId, body.inviteToken, body.answers); }
   return netlifyRequest(path, options);
 };
 
-const savedIds = (key) => JSON.parse(localStorage.getItem(key) || '[]');
-const rememberId = (key, id) => {
-  const ids = savedIds(key);
-  if (!ids.includes(id)) localStorage.setItem(key, JSON.stringify([id, ...ids]));
-};
-
 const addEventToList = (event, target = '#ownedEvents', role = 'owner') => {
-  const card = document.createElement('article');
-  card.className = `event-card ${role === 'owner' ? 'featured' : ''}`;
-  card.dataset.eventId = event.id;
-  card.dataset.role = role;
-  card.tabIndex = 0;
+  const isOwnerCard = role === 'owner';
   if (target === '#ownedEvents') $('#emptyEvents')?.remove();
   const [dateValue, time] = event.options[0] || ['', ''];
-  card.innerHTML = '<div class="card-top"><span class="status amber"></span><button type="button" class="delete-event" aria-label="Delete event">&times;</button></div><div class="date-badge"><b></b><span></span></div><h3></h3><p></p><div class="card-footer"><span></span></div>';
-  card.querySelector('.status').textContent = role === 'owner' ? '\u05d0\u05ea/\u05d4 \u05d4\u05de\u05d0\u05e8\u05d2\u05df/\u05ea' : '\u05d4\u05d5\u05d6\u05de\u05e0\u05ea';
-  if (role !== 'owner') card.querySelector('.delete-event').remove();
-  card.querySelector('.date-badge b').textContent = dateValue.slice(-2);
-  card.querySelector('.date-badge span').textContent = dateValue.slice(5, 7);
-  card.querySelector('h3').textContent = event.title;
-  card.querySelector('p').textContent = `${time} \u00b7 ${event.options.length} \u05d0\u05e4\u05e9\u05e8\u05d5\u05d9\u05d5\u05ea`;
-  card.querySelector('.card-footer span').textContent = `${event.guests.length} \u05de\u05d5\u05d6\u05de\u05e0\u05d9\u05dd`;
+  const badge = dateBadge(dateValue);
+  const card = el('article', {
+    class: `event-card ${isOwnerCard ? 'featured' : ''}`,
+    tabIndex: 0,
+    dataset: { eventId: event.id, role }
+  }, [
+    el('div', { class: 'card-top' }, [
+      el('span', { class: 'status amber', text: isOwnerCard ? 'את/ה המארגן/ת' : 'הוזמנת' }),
+      isOwnerCard && el('button', { type: 'button', class: 'delete-event', 'aria-label': 'מחיקת אירוע', text: '×' })
+    ]),
+    el('div', { class: 'date-badge' }, [
+      el('b', { text: badge.day }),
+      el('span', { text: badge.month })
+    ]),
+    el('h3', { text: event.title }),
+    el('p', { text: `${time} · ${event.options.length} אפשרויות` }),
+    el('div', { class: 'card-footer' }, [el('span', { text: `${event.guests.length} מוזמנים` })])
+  ]);
   $(target).prepend(card);
+  return card;
 };
 
 const loadEvents = async () => {
@@ -122,11 +236,11 @@ const loadEvents = async () => {
       const empty = document.createElement('p');
       empty.className = 'empty-events';
       empty.id = 'emptyEvents';
-      empty.textContent = '\u05e2\u05d3\u05d9\u05d9\u05df \u05d0\u05d9\u05df \u05d0\u05d9\u05e8\u05d5\u05e2\u05d9\u05dd \u05e9\u05d9\u05e6\u05e8\u05ea. \u05d0\u05e4\u05e9\u05e8 \u05dc\u05d4\u05ea\u05d7\u05d9\u05dc \u05d1\u05d9\u05e6\u05d9\u05e8\u05ea \u05d0\u05d9\u05e8\u05d5\u05e2 \u05d7\u05d3\u05e9.';
+      empty.textContent = 'עדיין אין אירועים שיצרת. אפשר להתחיל ביצירת אירוע חדש.';
       $('#ownedEvents').append(empty);
     }
   } catch {
-    toast('\u05dc\u05d0 \u05d4\u05e6\u05dc\u05d7\u05e0\u05d5 \u05dc\u05d8\u05e2\u05d5\u05df \u05d0\u05ea \u05d4\u05d0\u05d9\u05e8\u05d5\u05e2\u05d9\u05dd.');
+    toast('לא הצלחנו לטעון את האירועים.');
   }
 };
 
@@ -136,10 +250,13 @@ $('#showAllEvents').onclick = async () => {
   $('#ownedEvents').scrollIntoView({ behavior: 'smooth', block: 'start' });
 };
 
-const defaultDeadline = () => {
-  const date = new Date();
-  date.setDate(date.getDate() + 3);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+const defaultDeadline = () => daysFromNow(3);
+
+// The form ships with no dates baked into the markup; every default is derived here
+// so the app never opens on a date that has already passed.
+const resetEventFormDates = () => {
+  $('#deadline').value = defaultDeadline();
+  $$('#timeList .time-row [type=date]').forEach((input) => { input.value = daysFromNow(2); });
 };
 
 const eventForm = $('#eventForm');
@@ -164,11 +281,11 @@ wizardActions.className = 'wizard-actions';
 const wizardBack = document.createElement('button');
 wizardBack.type = 'button';
 wizardBack.className = 'text-button';
-wizardBack.textContent = '\u2192 \u05d7\u05d6\u05e8\u05d4';
+wizardBack.textContent = '→ חזרה';
 const wizardNext = document.createElement('button');
 wizardNext.type = 'button';
 wizardNext.className = 'primary';
-wizardNext.textContent = '\u05d4\u05de\u05e9\u05da \u2190';
+wizardNext.textContent = 'המשך ←';
 const wizardSubmit = eventForm.querySelector('[type=submit]');
 wizardActions.append(wizardBack, wizardNext, wizardSubmit);
 eventForm.append(wizardActions);
@@ -179,7 +296,7 @@ const showWizardStep = (index) => {
   wizardBack.classList.toggle('hidden', index === 0);
   wizardNext.classList.toggle('hidden', index === wizardSteps.length - 1);
   wizardSubmit.classList.toggle('hidden', index !== wizardSteps.length - 1);
-  $('.step-pill').textContent = `\u05e9\u05dc\u05d1 ${index + 1} \u05de\u05ea\u05d5\u05da 3`;
+  $('.step-pill').textContent = `שלב ${index + 1} מתוך 3`;
 };
 
 wizardNext.onclick = () => {
@@ -198,23 +315,41 @@ $('#createButton').onclick = () => {
     show(profileModal);
     return;
   }
-  $('#deadline').value = defaultDeadline();
+  resetEventFormDates();
   showWizardStep(0);
   show(modal);
 };
 $('#profileButton').onclick = () => authUser ? show(profileModal) : show(authModal);
 
+// Signing out clears every local trace of the account. The invite tokens go too:
+// they are credentials, and leaving them behind on a shared device after an
+// explicit sign-out is worse than making the guest reopen their invite link.
+const logoutButton = el('button', { type: 'button', class: 'text-button hidden', id: 'logout', text: 'התנתקות', style: { width: '100%', marginTop: '10px' } });
+profileModal.append(logoutButton);
+logoutButton.onclick = async () => {
+  logoutButton.disabled = true;
+  try { await window.MeetlyData?.signOut(); } catch { /* clear locally regardless */ }
+  [profileKey, invitedEventsKey].forEach((key) => localStorage.removeItem(key));
+  sessionStorage.removeItem('meetly-pending-invite');
+  location.replace(location.pathname);
+};
+
+const applyTodayLabel = () => {
+  $('#todayLabel').textContent = new Intl.DateTimeFormat('he-IL', { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date());
+};
+
 const applyProfile = () => {
   const accountName = authUser?.name || '';
-  $('#profileName').textContent = accountName || '\u05d4\u05d2\u05d3\u05e8\u05ea \u05e4\u05e8\u05d5\u05e4\u05d9\u05dc';
-  $('#profilePhone').textContent = profile?.phone || '\u05dc\u05d7\u05e6\u05d5 \u05dc\u05d4\u05d5\u05e1\u05e4\u05ea \u05d8\u05dc\u05e4\u05d5\u05df';
-  $('#profileAvatar').textContent = accountName.slice(0, 1) || '\u05d9';
+  logoutButton.classList.toggle('hidden', !authUser);
+  $('#profileName').textContent = accountName || 'הגדרת פרופיל';
+  $('#profilePhone').textContent = profile?.phone || 'לחצו להוספת טלפון';
+  $('#profileAvatar').textContent = accountName.slice(0, 1) || 'י';
   $('#profileNameInput').value = accountName;
   $('#profilePhoneInput').value = profile?.phone || '';
   const greeting = $('#greeting');
-  greeting.textContent = accountName ? `\u05d1\u05d5\u05e7\u05e8 \u05d8\u05d5\u05d1, ${accountName} ` : '\u05d1\u05e8\u05d5\u05db\u05d9\u05dd \u05d4\u05d1\u05d0\u05d9\u05dd ';
+  greeting.textContent = accountName ? `בוקר טוב, ${accountName} ` : 'ברוכים הבאים ';
   const sparkle = document.createElement('span');
-  sparkle.textContent = '\u2726';
+  sparkle.textContent = '✦';
   greeting.append(sparkle);
 };
 
@@ -251,10 +386,12 @@ $$('.nav-link').forEach((link) => {
 });
 
 $('#addTime').onclick = () => {
-  const row = document.createElement('div');
-  row.className = 'time-row';
-  row.innerHTML = '<input type="date" value="2026-07-23"><input type="time" value="11:00"><button type="button" class="remove-time">&times;</button>';
-  $('#timeList').append(row);
+  const last = [...$$('#timeList .time-row')].pop();
+  $('#timeList').append(el('div', { class: 'time-row' }, [
+    el('input', { type: 'date', 'aria-label': 'תאריך', value: last?.querySelector('[type=date]')?.value || daysFromNow(2) }),
+    el('input', { type: 'time', 'aria-label': 'שעה', value: '11:00' }),
+    el('button', { type: 'button', class: 'remove-time', 'aria-label': 'הסרת זמן', text: '×' })
+  ]));
 };
 
 $('#timeList').onclick = (event) => {
@@ -262,10 +399,12 @@ $('#timeList').onclick = (event) => {
 };
 
 const addGuestRow = () => {
-  const row = document.createElement('div');
-  row.className = 'time-row guest-row';
-  row.innerHTML = '<input class="guest-name" placeholder="\u05e9\u05dd \u05de\u05dc\u05d0" aria-label="Guest name"><input class="guest-phone" type="tel" inputmode="tel" placeholder="\u05de\u05e1\u05e4\u05e8 \u05d8\u05dc\u05e4\u05d5\u05df" aria-label="Phone number"><input class="guest-email" type="email" placeholder="\u05db\u05ea\u05d5\u05d1\u05ea \u05d0\u05d9\u05de\u05d9\u05d9\u05dc" aria-label="Email address"><button type="button" class="remove-time remove-guest">&times;</button>';
-  $('#guestList').append(row);
+  $('#guestList').append(el('div', { class: 'time-row guest-row' }, [
+    el('input', { class: 'guest-name', placeholder: 'שם מלא', 'aria-label': 'שם המוזמן' }),
+    el('input', { class: 'guest-phone', type: 'tel', inputMode: 'tel', placeholder: 'מספר טלפון', 'aria-label': 'מספר טלפון' }),
+    el('input', { class: 'guest-email', type: 'email', placeholder: 'כתובת אימייל', 'aria-label': 'כתובת אימייל' }),
+    el('button', { type: 'button', class: 'remove-time remove-guest', 'aria-label': 'הסרת מוזמן', text: '×' })
+  ]));
 };
 
 $('#addGuest').onclick = addGuestRow;
@@ -287,63 +426,69 @@ if (navigator.contacts?.select) {
   const contactButton = document.createElement('button');
   contactButton.type = 'button';
   contactButton.id = 'pickContacts';
-  contactButton.textContent = '\u25ce \u05d1\u05d7\u05d9\u05e8\u05d4 \u05de\u05d0\u05e0\u05e9\u05d9 \u05e7\u05e9\u05e8 \u05d1\u05d8\u05dc\u05e4\u05d5\u05df';
+  contactButton.textContent = '◎ בחירה מאנשי קשר בטלפון';
   $('#addGuest').before(contactButton);
   contactButton.onclick = async () => {
     try {
       const properties = await navigator.contacts.getProperties();
       const fields = ['name', 'tel'].filter((field) => properties.includes(field));
       if (!fields.includes('tel')) {
-        toast('\u05d4\u05d3\u05e4\u05d3\u05e4\u05df \u05dc\u05d0 \u05de\u05d0\u05e4\u05e9\u05e8 \u05e9\u05d9\u05ea\u05d5\u05e3 \u05de\u05e1\u05e4\u05e8\u05d9 \u05d8\u05dc\u05e4\u05d5\u05df.');
+        toast('הדפדפן לא מאפשר שיתוף מספרי טלפון.');
         return;
       }
       const contacts = await navigator.contacts.select(fields, { multiple: true });
       contacts.forEach(addSelectedContact);
-      if (contacts.length) toast(`\u05e0\u05d5\u05e1\u05e4\u05d5 ${contacts.length} \u05d0\u05e0\u05e9\u05d9 \u05e7\u05e9\u05e8.`);
+      if (contacts.length) toast(`נוספו ${contacts.length} אנשי קשר.`);
     } catch (error) {
-      if (error?.name !== 'AbortError') toast('\u05dc\u05d0 \u05d4\u05e6\u05dc\u05d7\u05e0\u05d5 \u05dc\u05d1\u05d7\u05d5\u05e8 \u05d0\u05e0\u05e9\u05d9 \u05e7\u05e9\u05e8.');
+      if (error?.name !== 'AbortError') toast('לא הצלחנו לבחור אנשי קשר.');
     }
   };
 }
 
-const inviteUrlFor = (eventData, guest) => `${location.origin}/?event=${encodeURIComponent(eventData.id)}&invite=${encodeURIComponent(guest.inviteToken)}#respond`;
+// location.pathname, not just the origin: the app may be served from a sub-path.
+const inviteUrlFor = (eventData, guest) => `${location.origin}${location.pathname}?event=${encodeURIComponent(eventData.id)}&invite=${encodeURIComponent(guest.inviteToken)}#respond`;
+// Without a token the link cannot be answered, so refuse to send a dead invite.
+const hasInviteToken = (guest) => {
+  if (guest.inviteToken) return true;
+  toast('חסר קוד הזמנה למוזמן הזה. רענן/י את הדף ונסה/י שוב.');
+  return false;
+};
 const sendAvailabilityInvite = (eventData, guest) => {
-  if (!guest.phone) return;
+  if (!guest.phone || !hasInviteToken(guest)) return;
   const otherParticipants = Math.max(eventData.guests.length - 1, 0);
-  const message = `\u05d4\u05d5\u05d6\u05de\u05e0\u05ea \u05dc\u05ea\u05d9\u05d0\u05d5\u05dd \u05e4\u05d2\u05d9\u05e9\u05d4 \u05e2\u05dc-\u05d9\u05d3\u05d9 ${eventData.organizer.name}\n\u05d8\u05dc\u05e4\u05d5\u05df: ${eventData.organizer.phone}\n\n\u05d1\u05d9\u05d7\u05d3 \u05e2\u05dd \u05e2\u05d5\u05d3 ${otherParticipants} \u05de\u05e9\u05ea\u05ea\u05e4\u05d9\u05dd\n\u05d1\u05e0\u05d5\u05e9\u05d0: ${eventData.title}\n\n\u05d0\u05e0\u05d0 \u05d4\u05e7\u05e9/\u05d9 \u05dc\u05d1\u05d7\u05d9\u05e8\u05ea \u05d6\u05de\u05df \u05de\u05ea\u05d0\u05d9\u05dd:\n${inviteUrlFor(eventData, guest)}`;
+  const message = `הוזמנת לתיאום פגישה על-ידי ${eventData.organizer.name}\nטלפון: ${eventData.organizer.phone}\n\nביחד עם עוד ${otherParticipants} משתתפים\nבנושא: ${eventData.title}\n\nאנא הקש/י לבחירת זמן מתאים:\n${inviteUrlFor(eventData, guest)}`;
   window.open(`https://api.whatsapp.com/send?phone=${guest.phone}&text=${encodeURIComponent(message)}`, '_blank', 'noopener');
 };
 const sendEmailInvite = (eventData, guest) => {
-  if (!guest.email) return;
-  const subject = `\u05d4\u05d6\u05de\u05e0\u05d4 \u05dc\u05ea\u05d9\u05d0\u05d5\u05dd \u05e4\u05d2\u05d9\u05e9\u05d4: ${eventData.title}`;
-  const body = `\u05e9\u05dc\u05d5\u05dd ${guest.name},\n\n\u05d4\u05d5\u05d6\u05de\u05e0\u05ea \u05dc\u05ea\u05d9\u05d0\u05d5\u05dd \u05e4\u05d2\u05d9\u05e9\u05d4 \u05e2\u05dc-\u05d9\u05d3\u05d9 ${eventData.organizer.name}.\n\u05e0\u05d5\u05e9\u05d0: ${eventData.title}\n\n\u05dc\u05d1\u05d7\u05d9\u05e8\u05ea \u05d6\u05de\u05df \u05de\u05ea\u05d0\u05d9\u05dd:\n${inviteUrlFor(eventData, guest)}`;
-  location.href = `mailto:${encodeURIComponent(guest.email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  if (!guest.email || !hasInviteToken(guest)) return;
+  const subject = `הזמנה לתיאום פגישה: ${eventData.title}`;
+  const body = `שלום ${guest.name},\n\nהוזמנת לתיאום פגישה על-ידי ${eventData.organizer.name}.\nנושא: ${eventData.title}\n\nלבחירת זמן מתאים:\n${inviteUrlFor(eventData, guest)}`;
+  // An anchor click hands off to the mail client without navigating this document away.
+  const link = document.createElement('a');
+  link.href = `mailto:${guest.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  document.body.append(link);
+  link.click();
+  link.remove();
 };
 const sendReminder = (eventData, guest) => {
-  const message = `\u05ea\u05d6\u05db\u05d5\u05e8\u05ea \u05e7\u05d8\u05e0\u05d4 \ud83d\ude4f\n\u05e2\u05d3\u05d9\u05d9\u05df \u05e0\u05e9\u05de\u05e8\u05d4 \u05d4\u05d1\u05d7\u05d9\u05e8\u05d4 \u05e9\u05dc\u05da \u05dc\u05ea\u05d9\u05d0\u05d5\u05dd \u05d4\u05e4\u05d2\u05d9\u05e9\u05d4 \u05d1\u05e0\u05d5\u05e9\u05d0: ${eventData.title}\n\n\u05d0\u05e0\u05d0 \u05d4\u05e7\u05e9/\u05d9 \u05dc\u05d1\u05d7\u05d9\u05e8\u05ea \u05d6\u05de\u05df \u05de\u05ea\u05d0\u05d9\u05dd:\n${inviteUrlFor(eventData, guest)}`;
+  if (!guest.phone || !hasInviteToken(guest)) return;
+  const message = `תזכורת קטנה 🙏\nעדיין נשמרה הבחירה שלך לתיאום הפגישה בנושא: ${eventData.title}\n\nאנא הקש/י לבחירת זמן מתאים:\n${inviteUrlFor(eventData, guest)}`;
   window.open(`https://api.whatsapp.com/send?phone=${guest.phone}&text=${encodeURIComponent(message)}`, '_blank', 'noopener');
 };
 const sendFinalInvite = (eventData, guest) => {
   if (!guest.phone) return;
   const [date, time] = eventData.finalSelection.option;
-  const message = `\u05e4\u05d2\u05d9\u05e9\u05d4 \u05e0\u05e7\u05d1\u05e2\u05d4!\n\n\u05e0\u05d5\u05e9\u05d0: ${eventData.title}\n\u05de\u05d5\u05e2\u05d3: ${date} \u05d1\u05e9\u05e2\u05d4 ${time}\n\u05de\u05e9\u05da: ${eventData.duration}\n\u05de\u05d0\u05e8\u05d2\u05df/\u05ea: ${eventData.organizer.name}\n\u05d8\u05dc\u05e4\u05d5\u05df: ${eventData.organizer.phone}`;
+  const message = `פגישה נקבעה!\n\nנושא: ${eventData.title}\nמועד: ${date} בשעה ${time}\nמשך: ${durationLabel(eventData.duration)}\nמארגן/ת: ${eventData.organizer.name}\nטלפון: ${eventData.organizer.phone}`;
   window.open(`https://api.whatsapp.com/send?phone=${guest.phone}&text=${encodeURIComponent(message)}`, '_blank', 'noopener');
 };
-const meetingMinutes = (duration) => {
-  if (String(duration).includes('\u05e9\u05e2\u05d4')) return 60;
-  const value = Number(String(duration).match(/\d+/)?.[0]);
-  return Number.isFinite(value) && value > 0 ? value : 60;
-};
-const calendarStamp = (date) => `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}T${String(date.getHours()).padStart(2, '0')}${String(date.getMinutes()).padStart(2, '0')}00`;
 const addToCalendar = (eventData) => {
   const [date, time] = eventData.finalSelection.option;
-  const start = new Date(`${date}T${time}:00`);
-  const end = new Date(start.getTime() + meetingMinutes(eventData.duration) * 60 * 1000);
   const guests = eventData.guests.map((guest) => guest.name).join(', ');
   const query = new URLSearchParams({
     action: 'TEMPLATE', text: eventData.title,
-    dates: `${calendarStamp(start)}/${calendarStamp(end)}`,
-    details: `\u05de\u05d0\u05e8\u05d2\u05df/\u05ea: ${eventData.organizer.name}\n\u05d8\u05dc\u05e4\u05d5\u05df: ${eventData.organizer.phone}\n\u05de\u05e9\u05ea\u05ea\u05e4\u05d9\u05dd: ${guests}`,
+    dates: calendarRange(date, time, meetingMinutes(eventData.duration)),
+    details: `מארגן/ת: ${eventData.organizer.name}\nטלפון: ${eventData.organizer.phone}\nמשתתפים: ${guests}`,
+    // The stamps above are plain wall-clock digits; this is what fixes their meaning.
     ctz: 'Asia/Jerusalem'
   });
   window.open(`https://calendar.google.com/calendar/render?${query.toString()}`, '_blank', 'noopener');
@@ -355,7 +500,7 @@ $('#eventForm').onsubmit = async (event) => {
   const organizer = { ...profile, name: authUser?.name || profile?.name || '' };
   const guests = [...$$('.guest-row')].map((row) => ({
     name: row.querySelector('.guest-name').value.trim(),
-    phone: row.querySelector('.guest-phone').value.trim().replace(/\D/g, '').replace(/^0/, '972'),
+    phone: normalizePhone(row.querySelector('.guest-phone').value),
     email: row.querySelector('.guest-email').value.trim()
   })).filter((guest) => guest.name || guest.phone || guest.email);
   const options = [...$$('#timeList .time-row')].map((row) => [
@@ -364,7 +509,7 @@ $('#eventForm').onsubmit = async (event) => {
   ]);
 
   if (!title || !organizer.name || !organizer.phone || guests.some((guest) => !guest.name || (!guest.phone && !guest.email))) {
-    toast('\u05d9\u05e9 \u05dc\u05de\u05dc\u05d0 \u05e9\u05dd \u05d5\u05d8\u05dc\u05e4\u05d5\u05df \u05d0\u05d5 \u05d0\u05d9\u05de\u05d9\u05d9\u05dc \u05dc\u05db\u05dc \u05de\u05d5\u05d6\u05de\u05df.');
+    toast('יש למלא שם וטלפון או אימייל לכל מוזמן.');
     return;
   }
 
@@ -376,42 +521,70 @@ $('#eventForm').onsubmit = async (event) => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ title, options, guests, organizer, duration: $('#duration').value, deadline: $('#deadline').value })
     });
-    rememberId(ownedEventsKey, createdEvent.id);
     addEventToList(createdEvent);
     hide();
-    createdEvent.guests.forEach((guest) => {
-      if (guest.phone) sendAvailabilityInvite(createdEvent, guest);
-      if (guest.email) sendEmailInvite(createdEvent, guest);
-    });
-    toast(`\u05d4\u05d0\u05d9\u05e8\u05d5\u05e2 \u05e0\u05e9\u05de\u05e8. \u05e0\u05e4\u05ea\u05d7\u05d4 \u05d4\u05d6\u05de\u05e0\u05d4 \u05e0\u05e4\u05e8\u05d3\u05ea \u05dc\u05db\u05dc ${createdEvent.guests.length} \u05de\u05d5\u05d6\u05de\u05e0\u05d9\u05dd.`);
+    // Sending in a loop would trip the pop-up blocker after the first window, so the
+    // guest list is opened instead and each invite goes out on its own click.
+    openEventDetails(createdEvent, true);
+    toast(`האירוע נשמר. שלחו הזמנה לכל אחד מ-${createdEvent.guests.length} המוזמנים מהרשימה.`);
   } catch {
-    toast('\u05dc\u05d0 \u05d4\u05e6\u05dc\u05d7\u05e0\u05d5 \u05dc\u05e9\u05de\u05d5\u05e8 \u05d0\u05ea \u05d4\u05d0\u05d9\u05e8\u05d5\u05e2. \u05e0\u05e1\u05d4/\u05d9 \u05e9\u05d5\u05d1.');
+    toast('לא הצלחנו לשמור את האירוע. נסה/י שוב.');
   } finally {
     submitButton.disabled = false;
   }
 };
 
-const renderChoices = () => {
-  $('#choiceList').innerHTML = choices.map(([date, time]) => {
-    const parsed = new Date(`${date}T12:00:00`);
-    const readable = Number.isNaN(parsed.getTime()) ? { day: date, number: '', month: '' } : {
-      day: new Intl.DateTimeFormat('he-IL', { weekday: 'short' }).format(parsed),
-      number: new Intl.DateTimeFormat('he-IL', { day: 'numeric' }).format(parsed),
-      month: new Intl.DateTimeFormat('he-IL', { month: 'long' }).format(parsed)
-    };
-    return `<div class="choice"><div class="choice-date"><span>${readable.day}</span><b>${readable.number}</b><span>${readable.month}</span></div><div class="choice-main"><b>${time}</b><span>משך הפגישה: ${activeEvent?.duration || ''}</span><div class="toggle"><button class="yes" data-answer="yes">✓ מתאים לי</button><button class="no" data-answer="no">לא מתאים</button></div></div></div>`;
-  }).join('');
-  $('#answerCount').textContent = `0/${choices.length}`;
+// The date, time and duration all come from the organizer's event record, so
+// interpolating them into markup would let an organizer run script in every
+// invitee's browser. Built as elements instead.
+const updateAnswerCount = () => {
+  $('#answerCount').textContent = `${$$('#choiceList .selected').length}/${choices.length}`;
+};
+
+const renderChoices = (savedAnswers = null) => {
+  const list = clear($('#choiceList'));
+  choices.forEach(([date, time], index) => {
+    const readable = readableChoiceDate(date);
+
+    // A returning guest sees the answers they already saved, not a blank form.
+    const saved = savedAnswers?.[index]?.answer || null;
+    list.append(el('div', { class: 'choice' }, [
+      el('div', { class: 'choice-date' }, [
+        el('span', { text: readable.day }),
+        el('b', { text: readable.number }),
+        el('span', { text: readable.month })
+      ]),
+      el('div', { class: 'choice-main' }, [
+        el('b', { text: time }),
+        el('span', { text: `משך הפגישה: ${durationLabel(activeEvent?.duration)}` }),
+        el('div', { class: 'toggle' }, [
+          el('button', { type: 'button', class: `yes${saved === 'yes' ? ' selected' : ''}`, text: '✓ מתאים לי', dataset: { answer: 'yes' } }),
+          el('button', { type: 'button', class: `no${saved === 'no' ? ' selected' : ''}`, text: 'לא מתאים', dataset: { answer: 'no' } })
+        ])
+      ])
+    ]));
+  });
+  updateAnswerCount();
 };
 
 const setResponseHeader = (eventData) => {
   $('.response-header h2').textContent = eventData.title || '';
   const info = $$('.meeting-info span');
-  if (info[0]) info[0].textContent = `\u25f7 ${eventData.duration || ''}`;
-  if (info[1]) info[1].textContent = `\u2659 \u05de\u05d0\u05ea ${eventData.organizer?.name || ''}`;
+  if (info[0]) info[0].textContent = `◷ ${durationLabel(eventData.duration)}`;
+  if (info[1]) info[1].textContent = `♙ מאת ${eventData.organizer?.name || ''}`;
 };
-const openResponse = () => { renderChoices(); show(responseModal); };
-$('#openEvent')?.addEventListener('click', openResponse);
+// Options are passed in rather than read from a shared global, so opening an
+// organizer's details view can no longer leave stale state behind for a response.
+const openResponse = (options, savedAnswers = null) => {
+  choices = options || [];
+  const closed = deadlinePassed(activeEvent);
+  renderChoices(savedAnswers);
+  const save = $('#saveResponse');
+  save.disabled = closed;
+  save.textContent = closed ? 'מועד ההשבה חלף' : 'שמירת הבחירות';
+  if (closed) toast('המועד להשבה חלף. לא ניתן לעדכן את הבחירות.');
+  show(responseModal);
+};
 
 const setDetailsTab = (name) => {
   $$('.detail-tab').forEach((tab) => {
@@ -431,22 +604,22 @@ const openFinalize = (eventData) => {
   finalizeEvent = eventData;
   detailsModal.classList.add('hidden');
   const responses = eventData.responses || [];
-  $('#finalizeOptions').innerHTML = '';
+  const list = clear($('#finalizeOptions'));
   eventData.options.forEach((option, index) => {
     const available = responses.filter((response) => response.answers[index]?.answer === 'yes').length;
-    const label = document.createElement('label');
-    label.innerHTML = '<div></div>';
-    const input = document.createElement('input');
-    input.type = 'radio'; input.name = 'final-option'; input.value = String(index);
-    input.checked = eventData.finalSelection?.index === index || (!eventData.finalSelection && index === 0);
-    label.querySelector('div').textContent = `${option[0]} \u00b7 ${option[1]} \u2014 ${available} \u05d9\u05db\u05d5\u05dc\u05d9\u05dd/\u05d5\u05ea`;
-    label.prepend(input);
-    $('#finalizeOptions').append(label);
+    list.append(el('label', {}, [
+      el('input', {
+        type: 'radio', name: 'final-option', value: String(index),
+        checked: eventData.finalSelection?.index === index || (!eventData.finalSelection && index === 0)
+      }),
+      el('div', { text: `${option[0]} · ${option[1]} — ${available} יכולים/ות` })
+    ]));
   });
   show(finalizeModal);
 };
 
 finalizeButton.onclick = () => { if (activeEvent) openFinalize(activeEvent); };
+calendarButton.onclick = () => { if (activeEvent?.finalSelection) addToCalendar(activeEvent); };
 $('#confirmFinalize').onclick = async () => {
   const selected = $('#finalizeOptions input:checked');
   if (!finalizeEvent || !selected) return;
@@ -457,43 +630,42 @@ $('#confirmFinalize').onclick = async () => {
       method: 'PATCH', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ selectedOptionIndex: Number(selected.value) })
     });
-    finalized.guests.forEach((guest) => {
-      if (guest.phone) sendFinalInvite(finalized, guest);
-      if (guest.email) sendEmailInvite(finalized, guest);
-    });
-    addToCalendar(finalized);
+    if (!finalized?.finalSelection) throw new Error('המועד לא נשמר. נסה/י שוב.');
     hide();
+    // Same pop-up-blocker constraint as event creation: one send per user click.
     openEventDetails(finalized, true);
-    toast('\u05d4\u05d1\u05d7\u05d9\u05e8\u05d4 \u05e0\u05e1\u05d2\u05e8\u05d4. \u05e0\u05e4\u05ea\u05d7 \u05d6\u05d9\u05de\u05d5\u05df \u05e0\u05e4\u05e8\u05d3 \u05dc\u05db\u05dc \u05de\u05d5\u05d6\u05de\u05df.');
+    toast('המועד נסגר. שלחו זימון לכל מוזמן מהרשימה, ואפשר להוסיף את הפגישה ליומן.');
   } catch (error) {
-    toast(error.message || '\u05dc\u05d0 \u05d4\u05e6\u05dc\u05d7\u05e0\u05d5 \u05dc\u05e1\u05d2\u05d5\u05e8 \u05d0\u05ea \u05d4\u05d1\u05d7\u05d9\u05e8\u05d4.');
+    toast(error.message || 'לא הצלחנו לסגור את הבחירה.');
   } finally { button.disabled = false; }
+};
+
+const markSent = (button) => {
+  if (button.dataset.sent) return;
+  button.dataset.sent = '1';
+  button.textContent = `✓ ${button.textContent}`;
 };
 
 $('#detailGuests').onclick = (event) => {
   const button = event.target.closest('[data-send]');
   if (!button || !activeEvent) return;
-  const guest = activeEvent.guests.find((item) => item.id === button.dataset.guestId);
+  // Index rather than guest.id: ids are assigned server-side and may be absent.
+  const guest = activeEvent.guests[Number(button.dataset.guestIndex)];
   if (!guest) return;
-  if (button.dataset.send === 'email') { sendEmailInvite(activeEvent, guest); return; }
-  button.dataset.action === 'reminder' ? sendReminder(activeEvent, guest) : sendAvailabilityInvite(activeEvent, guest);
+  if (button.dataset.send === 'email') sendEmailInvite(activeEvent, guest);
+  else if (button.dataset.action === 'final') sendFinalInvite(activeEvent, guest);
+  else if (button.dataset.action === 'reminder') sendReminder(activeEvent, guest);
+  else sendAvailabilityInvite(activeEvent, guest);
+  markSent(button);
 };
 
 const openEventDetails = (eventData, ownerView = Boolean(authUser && eventData.ownerId === authUser.id)) => {
   activeEvent = eventData.id ? eventData : null;
-  choices = eventData.options;
   $('#detailTitle').textContent = eventData.title;
-  $('#detailDuration').innerHTML = '';
-  const durationItem = document.createElement('div');
-  durationItem.textContent = eventData.duration || '\u05e4\u05e8\u05d8\u05d9 \u05d4\u05de\u05e9\u05da \u05dc\u05d0 \u05d6\u05de\u05d9\u05e0\u05d9\u05dd';
-  $('#detailDuration').append(durationItem);
-  $('#detailOptions').innerHTML = '';
-  eventData.options.forEach(([date, time]) => {
-    const item = document.createElement('div');
-    item.textContent = `${date} · ${time}`;
-    $('#detailOptions').append(item);
-  });
-  $('#detailGuests').innerHTML = '';
+  clear($('#detailDuration')).append(el('div', { text: durationLabel(eventData.duration) || 'פרטי המשך לא זמינים' }));
+  const optionList = clear($('#detailOptions'));
+  eventData.options.forEach(([date, time]) => optionList.append(el('div', { text: `${date} · ${time}` })));
+  clear($('#detailGuests'));
   const guests = eventData.guests || [];
   const responses = eventData.responses || [];
   const isOwner = ownerView;
@@ -501,49 +673,54 @@ const openEventDetails = (eventData, ownerView = Boolean(authUser && eventData.o
   $('#detailStatsTab').classList.toggle('hidden', !isOwner);
   $('#openResponseFromDetails').classList.toggle('hidden', Boolean(isOwner));
   finalizeButton.classList.toggle('hidden', !isOwner);
+  calendarButton.classList.toggle('hidden', !eventData.finalSelection);
   finalizeButton.textContent = isOwner && eventData.finalSelection
-    ? '\u05e2\u05d3\u05db\u05d5\u05df \u05d4\u05de\u05d5\u05e2\u05d3 \u05d5\u05e9\u05dc\u05d9\u05d7\u05d4 \u05de\u05d7\u05d3\u05e9'
-    : '\u05e1\u05d2\u05d9\u05e8\u05ea \u05d1\u05d7\u05d9\u05e8\u05d4 \u05d5\u05e9\u05dc\u05d9\u05d7\u05ea \u05d6\u05d9\u05de\u05d5\u05e0\u05d9\u05dd';
+    ? 'עדכון המועד ושליחה מחדש'
+    : 'סגירת בחירה ושליחת זימונים';
   // For organizers, lead with the guest list—the primary next action after opening an existing event.
   setDetailsTab(isOwner ? 'guests' : 'details');
   if (isOwner) {
     const responded = responses.length;
-    const stats = $('#detailStats');
-    stats.innerHTML = '';
+    const stats = clear($('#detailStats'));
     const summary = document.createElement('div');
-    summary.textContent = `\u05d4\u05e9\u05d9\u05d1\u05d5: ${responded}/${guests.length} · \u05de\u05de\u05ea\u05d9\u05e0\u05d9\u05dd: ${guests.length - responded}`;
+    summary.textContent = `השיבו: ${responded}/${guests.length} · ממתינים: ${guests.length - responded}`;
     stats.append(summary);
     if (eventData.finalSelection?.option) {
       const finalItem = document.createElement('div');
-      finalItem.textContent = `\u05de\u05d5\u05e2\u05d3 \u05e0\u05d1\u05d7\u05e8: ${eventData.finalSelection.option[0]} \u00b7 ${eventData.finalSelection.option[1]}`;
+      finalItem.textContent = `מועד נבחר: ${eventData.finalSelection.option[0]} · ${eventData.finalSelection.option[1]}`;
       stats.append(finalItem);
     }
     eventData.options.forEach((option, index) => {
       const available = responses.filter((response) => response.answers[index]?.answer === 'yes').length;
       const item = document.createElement('div');
-      item.textContent = `${option[0]} · ${option[1]} — ${available} \u05d9\u05db\u05d5\u05dc\u05d9\u05dd/\u05d5\u05ea`;
+      item.textContent = `${option[0]} · ${option[1]} — ${available} יכולים/ות`;
       stats.append(item);
     });
   }
-  if (!guests.length) $('#detailGuests').textContent = '\u05d0\u05d9\u05df \u05e4\u05e8\u05d8\u05d9 \u05de\u05d5\u05d6\u05de\u05e0\u05d9\u05dd';
-  guests.forEach((guest) => {
+  if (!guests.length) $('#detailGuests').textContent = 'אין פרטי מוזמנים';
+  const isFinalized = Boolean(eventData.finalSelection);
+  guests.forEach((guest, guestIndex) => {
     const item = document.createElement('div');
     const response = responses.find((savedResponse) => savedResponse.guestId === guest.id);
-    item.textContent = `${guest.name} · ${response ? '\u05d4\u05e9\u05d9\u05d1/\u05d4' : '\u05d8\u05e8\u05dd \u05d4\u05e9\u05d9\u05d1/\u05d4'}`;
-    if (guest.phone) item.append(document.createElement('br'), `\u05d8\u05dc\u05e4\u05d5\u05df: ${guest.phone}`);
-    if (guest.email) item.append(document.createElement('br'), `\u05d0\u05d9\u05de\u05d9\u05d9\u05dc: ${guest.email}`);
+    item.textContent = `${guest.name} · ${response ? 'השיב/ה' : 'טרם השיב/ה'}`;
+    if (guest.phone) item.append(document.createElement('br'), `טלפון: ${guest.phone}`);
+    if (guest.email) item.append(document.createElement('br'), `אימייל: ${guest.email}`);
     if (isOwner) {
       if (guest.phone) {
         const phoneButton = document.createElement('button');
-        phoneButton.type = 'button'; phoneButton.className = 'text-button'; phoneButton.dataset.guestId = guest.id;
-        phoneButton.dataset.send = 'phone'; phoneButton.dataset.action = response ? 'resend' : 'reminder';
-        phoneButton.textContent = response ? '\u05e9\u05dc\u05d7 \u05e9\u05d5\u05d1 \u05dc\u05d8\u05dc\u05e4\u05d5\u05df' : '\u05e9\u05dc\u05d7 \u05ea\u05d6\u05db\u05d5\u05e8\u05ea \u05dc\u05d8\u05dc\u05e4\u05d5\u05df';
+        // Index rather than guest.id: ids are assigned server-side and may be absent.
+        phoneButton.type = 'button'; phoneButton.className = 'text-button'; phoneButton.dataset.guestIndex = String(guestIndex);
+        phoneButton.dataset.send = 'phone';
+        phoneButton.dataset.action = isFinalized ? 'final' : (response ? 'resend' : 'reminder');
+        phoneButton.textContent = isFinalized
+          ? 'שליחת הזימון בוואטסאפ'
+          : (response ? 'שלח שוב לטלפון' : 'שלח תזכורת לטלפון');
         item.append(' ', phoneButton);
       }
       if (guest.email) {
         const emailButton = document.createElement('button');
-        emailButton.type = 'button'; emailButton.className = 'text-button'; emailButton.dataset.guestId = guest.id;
-        emailButton.dataset.send = 'email'; emailButton.textContent = '\u05e9\u05dc\u05d7 \u05e9\u05d5\u05d1 \u05d1\u05d0\u05d9\u05de\u05d9\u05d9\u05dc';
+        emailButton.type = 'button'; emailButton.className = 'text-button'; emailButton.dataset.guestIndex = String(guestIndex);
+        emailButton.dataset.send = 'email'; emailButton.textContent = 'שליחה באימייל';
         item.append(' ', emailButton);
       }
     }
@@ -552,66 +729,88 @@ const openEventDetails = (eventData, ownerView = Boolean(authUser && eventData.o
   show(detailsModal);
 };
 
-const openSavedEvent = async (eventId) => {
+// An invitee must re-fetch through their token (RLS blocks a plain select) and must
+// never be handed the organizer view.
+const openSavedEvent = async (eventId, role = 'owner', inviteToken = null) => {
   try {
-    openEventDetails(await apiRequest(`/events?id=${encodeURIComponent(eventId)}`), true);
+    const path = inviteToken
+      ? `/events?id=${encodeURIComponent(eventId)}&invite=${encodeURIComponent(inviteToken)}`
+      : `/events?id=${encodeURIComponent(eventId)}`;
+    const eventData = await apiRequest(path);
+    if (!eventData) throw new Error('not found');
+    // Keep the token around so saving a response posts against the right invite.
+    if (inviteToken) activeInviteToken = inviteToken;
+    openEventDetails(eventData, role === 'owner');
   } catch {
-    toast('\u05dc\u05d0 \u05d4\u05e6\u05dc\u05d7\u05e0\u05d5 \u05dc\u05d8\u05e2\u05d5\u05df \u05d0\u05ea \u05d4\u05d0\u05d9\u05e8\u05d5\u05e2.');
+    toast('לא הצלחנו לטעון את האירוע.');
   }
 };
 
-$('#ownedEvents').onclick = (event) => {
+const onCardClick = (event) => {
   const card = event.target.closest('.event-card');
   if (!card) return;
   if (event.target.classList.contains('delete-event')) {
     event.stopPropagation();
     if (!card.dataset.eventId) {
-      toast('\u05e0\u05d9\u05ea\u05df \u05dc\u05de\u05d7\u05d5\u05e7 \u05e8\u05e7 \u05d0\u05d9\u05e8\u05d5\u05e2\u05d9\u05dd \u05e9\u05e0\u05e9\u05de\u05e8\u05d5.');
+      toast('ניתן למחוק רק אירועים שנשמרו.');
       return;
     }
-    if (!window.confirm('\u05dc\u05de\u05d7\u05d5\u05e7 \u05d0\u05ea \u05d4\u05d0\u05d9\u05e8\u05d5\u05e2?')) return;
+    if (!window.confirm('למחוק את האירוע?')) return;
     apiRequest(`/events?id=${encodeURIComponent(card.dataset.eventId)}`, { method: 'DELETE' })
-      .then(() => { card.remove(); localStorage.setItem(ownedEventsKey, JSON.stringify(savedIds(ownedEventsKey).filter((id) => id !== card.dataset.eventId))); toast('\u05d4\u05d0\u05d9\u05e8\u05d5\u05e2 \u05e0\u05de\u05d7\u05e7.'); })
-      .catch(() => toast('\u05dc\u05d0 \u05d4\u05e6\u05dc\u05d7\u05e0\u05d5 \u05dc\u05de\u05d7\u05d5\u05e7 \u05d0\u05ea \u05d4\u05d0\u05d9\u05e8\u05d5\u05e2.'));
+      .then(() => { card.remove(); toast('האירוע נמחק.'); })
+      .catch(() => toast('לא הצלחנו למחוק את האירוע.'));
     return;
   }
-  if (card.dataset.eventId) {
-    openSavedEvent(card.dataset.eventId);
+  if (!card.dataset.eventId) {
+    // Every card is built from a saved event, so this should not happen. Say so
+    // rather than rendering whatever options happened to be in memory.
+    toast('לא הצלחנו לזהות את האירוע. רענן/י את הדף.');
     return;
   }
-  openEventDetails({ title: card.querySelector('h3').textContent, options: choices, guests: [] }, true);
+  openSavedEvent(card.dataset.eventId, card.dataset.role, card.dataset.inviteToken || null);
 };
 
-$('#ownedEvents').onkeydown = (event) => {
+const onCardKeydown = (event) => {
   if (event.key === 'Enter' && event.target.classList.contains('event-card')) event.target.click();
 };
-$('#invitedGrid').onclick = $('#ownedEvents').onclick;
-$('#invitedGrid').onkeydown = $('#ownedEvents').onkeydown;
+$('#ownedEvents').onclick = onCardClick;
+$('#ownedEvents').onkeydown = onCardKeydown;
+$('#invitedGrid').onclick = onCardClick;
+$('#invitedGrid').onkeydown = onCardKeydown;
 $('#openResponseFromDetails').onclick = () => {
-  $('.response-header h2').textContent = $('#detailTitle').textContent;
+  if (!activeEvent) return;
+  setResponseHeader(activeEvent);
   detailsModal.classList.add('hidden');
-  openResponse();
+  openResponse(activeEvent.options, activeEvent.myAnswers);
 };
 $('#choiceList').onclick = (event) => {
   if (!event.target.dataset.answer) return;
   const group = event.target.parentElement;
   group.querySelectorAll('button').forEach((button) => button.classList.remove('selected'));
   event.target.classList.add('selected');
-  $('#answerCount').textContent = `${$$('#choiceList .selected').length}/${choices.length}`;
+  updateAnswerCount();
 };
 
 $('#saveResponse').onclick = async () => {
   const answers = [...$$('#choiceList .toggle')].map((toggle, index) => ({ option: choices[index], answer: toggle.querySelector('.selected')?.dataset.answer || null }));
+  if (!answers.some((entry) => entry.answer)) {
+    toast('בחר/י לפחות אפשרות אחת לפני השמירה.');
+    return;
+  }
+  if (deadlinePassed(activeEvent)) {
+    toast('המועד להשבה חלף. לא ניתן לעדכן את הבחירות.');
+    return;
+  }
   if (activeEvent) {
     try {
       await apiRequest('/responses', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ eventId: activeEvent.id, inviteToken: activeInviteToken, answers }) });
     } catch {
-      toast('\u05dc\u05d0 \u05d4\u05e6\u05dc\u05d7\u05e0\u05d5 \u05dc\u05e9\u05de\u05d5\u05e8 \u05d0\u05ea \u05d4\u05d1\u05d7\u05d9\u05e8\u05d4.');
+      toast('לא הצלחנו לשמור את הבחירה.');
       return;
     }
   }
   hide();
-  toast('\u05d4\u05d1\u05d7\u05d9\u05e8\u05d4 \u05e0\u05e9\u05de\u05e8\u05d4.');
+  toast('הבחירה נשמרה.');
 };
 
 const loadInvitation = async () => {
@@ -620,14 +819,14 @@ const loadInvitation = async () => {
   if (!eventId || !activeInviteToken || location.hash !== '#respond') return false;
   try {
     activeEvent = await apiRequest(`/events?id=${encodeURIComponent(eventId)}&invite=${encodeURIComponent(activeInviteToken)}`);
+    if (!activeEvent) throw new Error('not found');
     const saved = JSON.parse(localStorage.getItem(invitedEventsKey) || '[]');
     if (!saved.some((item) => item.id === activeEvent.id && item.invite === activeInviteToken)) localStorage.setItem(invitedEventsKey, JSON.stringify([{ id: activeEvent.id, invite: activeInviteToken }, ...saved]));
-    choices = activeEvent.options;
     setResponseHeader(activeEvent);
-    openResponse();
+    openResponse(activeEvent.options, activeEvent.myAnswers);
     return true;
   } catch {
-    toast('\u05d4\u05d4\u05d6\u05de\u05e0\u05d4 \u05dc\u05d0 \u05e0\u05de\u05e6\u05d0\u05d4.');
+    toast('ההזמנה לא נמצאה.');
     return false;
   }
 };
@@ -649,8 +848,13 @@ $('#inviteSignup').onclick = () => {
 const loadInvitedEvents = async () => {
   const invitations = JSON.parse(localStorage.getItem(invitedEventsKey) || '[]').filter((item) => item?.id && item?.invite);
   if (!invitations.length) return;
-  const events = await Promise.all(invitations.map((item) => apiRequest(`/events?id=${encodeURIComponent(item.id)}&invite=${encodeURIComponent(item.invite)}`).catch(() => null)));
-  events.filter(Boolean).reverse().forEach((event) => addEventToList(event, '#invitedGrid', 'invitee'));
+  const events = await Promise.all(invitations.map((item) => apiRequest(`/events?id=${encodeURIComponent(item.id)}&invite=${encodeURIComponent(item.invite)}`)
+    .then((event) => (event ? { event, invite: item.invite } : null))
+    .catch(() => null)));
+  // The token rides on the card so re-opening the event goes back through the RPC.
+  events.filter(Boolean).reverse().forEach(({ event, invite }) => {
+    addEventToList(event, '#invitedGrid', 'invitee').dataset.inviteToken = invite;
+  });
   if (events.some(Boolean)) {
     $('#invitedHeading').classList.remove('hidden');
     $('#invitedGrid').classList.remove('hidden');
@@ -663,8 +867,8 @@ const renderAuthMode = () => {
   $('#authNameLabel').classList.toggle('hidden', !signupMode);
   $('#authName').required = signupMode;
   $('#authPassword').autocomplete = signupMode ? 'new-password' : 'current-password';
-  $('#authSubmit').textContent = signupMode ? '\u05d9\u05e6\u05d9\u05e8\u05ea \u05d7\u05e9\u05d1\u05d5\u05df' : '\u05d4\u05ea\u05d7\u05d1\u05e8\u05d5\u05ea';
-  $('#authToggle').textContent = signupMode ? '\u05db\u05d1\u05e8 \u05d9\u05e9 \u05dc\u05d9 \u05d7\u05e9\u05d1\u05d5\u05df' : '\u05dc\u05d9\u05e6\u05d9\u05e8\u05ea \u05d7\u05e9\u05d1\u05d5\u05df \u05d7\u05d3\u05e9';
+  $('#authSubmit').textContent = signupMode ? 'יצירת חשבון' : 'התחברות';
+  $('#authToggle').textContent = signupMode ? 'כבר יש לי חשבון' : 'ליצירת חשבון חדש';
 };
 
 $('#authToggle').onclick = () => { signupMode = !signupMode; renderAuthMode(); };
@@ -692,7 +896,7 @@ $('#authForm').onsubmit = async (event) => {
       body: JSON.stringify({ action: signupMode ? 'signup' : 'login', email: $('#authEmail').value.trim(), password: $('#authPassword').value, name: $('#authName').value.trim() })
     });
     if (result.confirmationRequired) {
-      toast('\u05e0\u05e9\u05dc\u05d7 \u05d0\u05d9\u05de\u05d5\u05ea \u05dc\u05d3\u05d5\u05d0\u05f4\u05dc. \u05dc\u05d7\u05e6\u05d5 \u05e2\u05dc \u05d4\u05e7\u05d9\u05e9\u05d5\u05e8 \u05d5\u05d0\u05d6 \u05d4\u05ea\u05d7\u05d1\u05e8\u05d5.');
+      toast('נשלח אימות לדוא״ל. לחצו על הקישור ואז התחברו.');
       signupMode = false;
       renderAuthMode();
       return;
@@ -708,13 +912,26 @@ $('#authForm').onsubmit = async (event) => {
     if (!profile?.phone) show(profileModal);
     loadEvents();
   } catch (error) {
-    toast(error.message || '\u05dc\u05d0 \u05d4\u05e6\u05dc\u05d7\u05e0\u05d5 \u05dc\u05d4\u05ea\u05d7\u05d1\u05e8.');
+    toast(error.message || 'לא הצלחנו להתחבר.');
   } finally { submit.disabled = false; }
 };
 
 const init = async () => {
+  applyTodayLabel();
+  resetEventFormDates();
   renderAuthMode();
   applyProfile();
+  if (window.MeetlyData) {
+    // A refresh that cannot be recovered means the session is over: say so and ask
+    // for a fresh login instead of letting every later call fail opaquely.
+    MeetlyData.onSessionExpired = () => {
+      authUser = null;
+      applyProfile();
+      hide();
+      show(authModal);
+      toast('פג תוקף ההתחברות. יש להתחבר מחדש.');
+    };
+  }
   if (window.MeetlyData?.finishGoogleLogin) {
     try { authUser = await MeetlyData.finishGoogleLogin(); } catch { authUser = null; }
   }
@@ -729,10 +946,14 @@ const init = async () => {
       sessionStorage.removeItem('meetly-pending-invite');
       history.replaceState(null, '', pendingInvite ? `${location.pathname}${pendingInvite}#respond` : `${location.pathname}${location.search}`);
     } catch (error) {
-      toast(error.message || '\u05d4\u05d4\u05ea\u05d7\u05d1\u05e8\u05d5\u05ea \u05e2\u05dd Google \u05e0\u05db\u05e9\u05dc\u05d4.');
+      toast(error.message || 'ההתחברות עם Google נכשלה.');
     }
   }
-  if (!authUser) { authUser = window.MeetlyData?.currentUser() || null; if (!authUser) { try { authUser = (await apiRequest('/auth')).user; } catch { authUser = null; } } }
+  if (!authUser) {
+    authUser = window.MeetlyData?.currentUser() || null;
+    // Only probe the Netlify session endpoint when there is no Supabase adapter to ask.
+    if (!authUser && !window.MeetlyData) { try { authUser = (await apiRequest('/auth')).user; } catch { authUser = null; } }
+  }
   applyProfile();
   if (isInvitationLink()) {
     if (authUser) await loadInvitation();

@@ -13,6 +13,17 @@ means a policy change shows up in review like any other code change.
 | File | Purpose |
 | --- | --- |
 | `migrations/0001_baseline.sql` | Tables, guest-token trigger, RLS policies, invite RPCs |
+| `reset.sql` | **Destructive.** Drops Meetly's own objects so the baseline can recreate them |
+
+## Starting over
+
+`reset.sql` is for a project with no data worth keeping. It deletes every event,
+guest list and response, and it refuses to run until you uncomment a confirmation
+line. It drops Meetly's objects **by name only** — any other table in `public` is left
+untouched, because a blanket schema wipe would take things nobody has identified.
+
+Order: back up (step 0) → dry run (step 1) → uncomment (step 2) → run `reset.sql` →
+run `migrations/0001_baseline.sql`.
 
 ## Before you apply anything
 

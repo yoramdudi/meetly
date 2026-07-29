@@ -2,11 +2,26 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+const fs = require('node:fs');
+const path = require('node:path');
+
 const {
   isoDate, daysFromNow, today, deadlinePassed, dateBadge, readableChoiceDate,
   meetingMinutes, durationLabel, calendarStamp, calendarRange, normalizePhone,
-  guestContactValid, applyGuestEdit, guestsCarryTokens
+  guestContactValid, applyGuestEdit, guestsCarryTokens, removeGuestAt, appendGuest
 } = require('../lib.js');
+
+// The version is declared twice — the browser cannot read package.json without a
+// build step — so it is asserted here instead of trusted to stay in sync by hand.
+// It is user-visible in the sidebar, which is what makes drift worth catching.
+test('APP_VERSION in app.js matches package.json', () => {
+  const root = path.join(__dirname, '..');
+  const declared = fs.readFileSync(path.join(root, 'app.js'), 'utf8')
+    .match(/const APP_VERSION = '([^']+)'/)?.[1];
+  const packaged = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
+  assert.ok(declared, 'APP_VERSION not found in app.js');
+  assert.equal(declared, packaged);
+});
 
 test('durationLabel formats the stored minute count', () => {
   assert.equal(durationLabel('30'), '30 דקות');
@@ -189,6 +204,46 @@ test('guestsCarryTokens rejects lists an edit would corrupt', () => {
   assert.equal(guestsCarryTokens([]), false);
   assert.equal(guestsCarryTokens(null), false);
   assert.equal(guestsCarryTokens(undefined), false);
+});
+
+test('removeGuestAt drops only the chosen guest', () => {
+  const left = removeGuestAt(GUESTS(), 0);
+  assert.equal(left.length, 1);
+  assert.deepEqual(left[0], GUESTS()[1], 'the survivor keeps its id and token');
+});
+
+test('removeGuestAt does not mutate the input array', () => {
+  const before = GUESTS();
+  removeGuestAt(before, 0);
+  assert.deepEqual(before, GUESTS());
+});
+
+test('removeGuestAt is a no-op for an out-of-range index', () => {
+  assert.deepEqual(removeGuestAt(GUESTS(), 7), GUESTS());
+});
+
+test('removeGuestAt can empty the list and tolerates a missing one', () => {
+  assert.deepEqual(removeGuestAt([GUESTS()[0]], 0), []);
+  assert.deepEqual(removeGuestAt(null, 0), []);
+});
+
+test('appendGuest adds the new guest last and leaves the others alone', () => {
+  const grown = appendGuest(GUESTS(), { name: 'רון', phone: '972544444444', email: '' });
+  assert.equal(grown.length, 3);
+  assert.deepEqual(grown.slice(0, 2), GUESTS());
+  assert.equal(grown[2].name, 'רון');
+});
+
+test('appendGuest deliberately carries no id or token', () => {
+  // Both are minted by the events_stamp_guests trigger; a client must never pick them.
+  const added = appendGuest([], { name: 'רון', phone: '972544444444', email: '' })[0];
+  assert.equal(added.id, undefined);
+  assert.equal(added.inviteToken, undefined);
+  assert.deepEqual(Object.keys(added).sort(), ['email', 'name', 'phone']);
+});
+
+test('appendGuest works on an event with no guests yet', () => {
+  assert.equal(appendGuest(null, { name: 'רון', phone: '', email: 'ron@example.com' }).length, 1);
 });
 
 test('guestContactValid requires a name and one channel', () => {

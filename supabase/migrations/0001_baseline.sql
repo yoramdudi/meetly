@@ -99,6 +99,31 @@ create trigger events_stamp_guests
   before insert or update of guests on public.events
   for each row execute function public.stamp_guest_tokens();
 
+-- Removing a guest from events.guests would otherwise leave their row in `responses`
+-- behind, and a removed person's answer would keep counting toward "N of M replied"
+-- and toward each slot's tally. The invariant "no response without a matching guest"
+-- is enforced here rather than in the client, so it holds however the row is updated.
+create or replace function public.prune_orphan_responses()
+returns trigger
+language plpgsql
+as $$
+begin
+  delete from public.responses r
+   where r.event_id = new.id
+     and not exists (
+       select 1
+       from jsonb_array_elements(coalesce(new.guests, '[]'::jsonb)) g
+       where g ->> 'id' = r.guest_id
+     );
+  return null;
+end;
+$$;
+
+drop trigger if exists events_prune_responses on public.events;
+create trigger events_prune_responses
+  after update of guests on public.events
+  for each row execute function public.prune_orphan_responses();
+
 -- ---------------------------------------------------------------- RLS
 
 alter table public.events enable row level security;

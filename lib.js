@@ -119,9 +119,21 @@
     && guests.length > 0
     && guests.every((guest) => Boolean(guest?.id) && Boolean(guest?.inviteToken));
 
+  // Drops one guest, leaving the rest — including their ids and tokens — untouched.
+  // Any response already stored for the removed guest is deleted database-side by the
+  // events_prune_responses trigger, so a stale answer cannot keep skewing the tallies.
+  const removeGuestAt = (guests, index) => (guests || []).filter((guest, position) => position !== index);
+
+  // Appends a guest with no id and no inviteToken on purpose: both are minted by the
+  // events_stamp_guests trigger, so a client never chooses another guest's token.
+  const appendGuest = (guests, patch) => [
+    ...(guests || []),
+    { name: patch.name, phone: patch.phone, email: patch.email }
+  ];
+
   return {
     isoDate, daysFromNow, today, deadlinePassed, dateBadge, readableChoiceDate,
     meetingMinutes, durationLabel, calendarStamp, calendarRange, normalizePhone,
-    guestContactValid, applyGuestEdit, guestsCarryTokens
+    guestContactValid, applyGuestEdit, guestsCarryTokens, removeGuestAt, appendGuest
   };
 }));

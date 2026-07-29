@@ -42,3 +42,4 @@
 .guest-edit-title{font-weight:700;color:var(--ink)}
 .guest-edit-actions{display:flex;gap:12px;align-items:center}
 .guest-edit-note{font-size:11px;color:var(--muted);margin:0}
+.guest-remove{color:#af4558}

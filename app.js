@@ -6,7 +6,7 @@ const $$ = (selector) => document.querySelectorAll(selector);
 const {
   daysFromNow, deadlinePassed, dateBadge, readableChoiceDate,
   meetingMinutes, durationLabel, calendarRange, normalizePhone,
-  guestContactValid, applyGuestEdit, guestsCarryTokens
+  guestContactValid, applyGuestEdit, guestsCarryTokens, removeGuestAt, appendGuest
 } = window.MeetlyLib;
 
 // Every element in this file is built through the DOM rather than from an HTML
@@ -27,7 +27,7 @@ const el = (tag, props = {}, children = []) => {
 };
 const clear = (node) => { node.textContent = ''; return node; };
 
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 $('#appVersion').textContent = `גרסה ${APP_VERSION}`;
 const modal = $('#eventModal');
 const backdrop = $('#modalBackdrop');
@@ -679,32 +679,48 @@ const guestDisplayRow = (guest, guestIndex, response, isFinalized) => {
   item.append(' ', el('button', {
     type: 'button', class: 'text-button', dataset: { ...ref, guestEdit: '1' }, text: '✎ תיקון פרטים'
   }));
+  item.append(' ', el('button', {
+    type: 'button', class: 'text-button guest-remove', dataset: { ...ref, guestRemove: '1' }, text: '✕ הסרה'
+  }));
   return item;
 };
 
-const guestEditRow = (guest, guestIndex) => el('div', { class: 'guest-edit', dataset: { guestForm: String(guestIndex) } }, [
-  el('span', { class: 'guest-edit-title', text: 'תיקון פרטי מוזמן' }),
-  el('input', { class: 'guest-edit-name', value: guest.name || '', placeholder: 'שם מלא', 'aria-label': 'שם המוזמן' }),
-  el('input', { class: 'guest-edit-phone', type: 'tel', inputMode: 'tel', value: guest.phone || '', placeholder: 'מספר טלפון', 'aria-label': 'מספר טלפון' }),
-  el('input', { class: 'guest-edit-email', type: 'email', value: guest.email || '', placeholder: 'כתובת אימייל', 'aria-label': 'כתובת אימייל' }),
-  el('div', { class: 'guest-edit-actions' }, [
-    el('button', { type: 'button', class: 'text-button', dataset: { guestSave: String(guestIndex) }, text: 'שמירה' }),
-    el('button', { type: 'button', class: 'text-button', dataset: { guestCancel: '1' }, text: 'ביטול' })
-  ]),
-  el('p', { class: 'guest-edit-note', text: 'קוד ההזמנה נשמר, כך שתשובות שכבר התקבלו לא נאבדות. אחרי תיקון יש לשלוח את ההזמנה שוב.' })
-]);
+// index -1 is the "add a guest" form; anything else edits that position.
+const guestEditRow = (guest, guestIndex) => {
+  const isNew = guestIndex < 0;
+  return el('div', { class: 'guest-edit', dataset: { guestForm: String(guestIndex) } }, [
+    el('span', { class: 'guest-edit-title', text: isNew ? 'הוספת מוזמן' : 'תיקון פרטי מוזמן' }),
+    el('input', { class: 'guest-edit-name', value: guest.name || '', placeholder: 'שם מלא', 'aria-label': 'שם המוזמן' }),
+    el('input', { class: 'guest-edit-phone', type: 'tel', inputMode: 'tel', value: guest.phone || '', placeholder: 'מספר טלפון', 'aria-label': 'מספר טלפון' }),
+    el('input', { class: 'guest-edit-email', type: 'email', value: guest.email || '', placeholder: 'כתובת אימייל', 'aria-label': 'כתובת אימייל' }),
+    el('div', { class: 'guest-edit-actions' }, [
+      el('button', { type: 'button', class: 'text-button', dataset: { guestSave: String(guestIndex) }, text: isNew ? 'הוספה' : 'שמירה' }),
+      el('button', { type: 'button', class: 'text-button', dataset: { guestCancel: '1' }, text: 'ביטול' })
+    ]),
+    el('p', {
+      class: 'guest-edit-note',
+      text: isNew
+        ? 'המוזמן החדש יקבל קוד הזמנה משלו. אחרי ההוספה יש לשלוח לו/ה את ההזמנה.'
+        : 'קוד ההזמנה נשמר, כך שתשובות שכבר התקבלו לא נאבדות. אחרי תיקון יש לשלוח את ההזמנה שוב.'
+    })
+  ]);
+};
 
 const renderGuestList = () => {
   const container = clear($('#detailGuests'));
   const guests = activeEvent?.guests || [];
-  if (!guests.length) { container.textContent = 'אין פרטי מוזמנים'; return; }
   const responses = activeEvent?.responses || [];
   const isFinalized = Boolean(activeEvent?.finalSelection);
+  if (!guests.length && editingGuestIndex !== -1) container.append(el('div', { text: 'אין מוזמנים באירוע הזה' }));
   guests.forEach((guest, guestIndex) => {
     container.append(editingGuestIndex === guestIndex
       ? guestEditRow(guest, guestIndex)
       : guestDisplayRow(guest, guestIndex, responses.find((saved) => saved.guestId === guest.id), isFinalized));
   });
+  if (!detailsIsOwner) return;
+  container.append(editingGuestIndex === -1
+    ? guestEditRow({}, -1)
+    : el('button', { type: 'button', class: 'text-button', dataset: { guestAdd: '1' }, text: '＋ הוספת מוזמן' }));
 };
 
 const saveGuestEdit = async (guestIndex) => {
@@ -717,28 +733,64 @@ const saveGuestEdit = async (guestIndex) => {
     toast('יש למלא שם, ולפחות טלפון או אימייל.');
     return;
   }
-  // An edit must carry id and inviteToken back unchanged. If the loaded event lacks
-  // them, refuse rather than send a request that would rotate a live invite token and
-  // orphan the answer stored against that guest id.
-  if (!guestsCarryTokens(activeEvent.guests)) {
+  // Whatever the change, the guests already on the row must come back with their id and
+  // inviteToken intact — the id keys their stored response, the token is in the link
+  // already sent. If they did not load, refuse rather than send a request that rotates
+  // them. An event with no guests yet has nothing to preserve.
+  if (activeEvent.guests.length && !guestsCarryTokens(activeEvent.guests)) {
     toast('פרטי המוזמנים לא נטענו במלואם. רענן/י את הדף לפני עריכה.');
     return;
   }
+  const isNew = guestIndex < 0;
   const saveButton = form.querySelector('[data-guest-save]');
   saveButton.disabled = true;
-  const guests = applyGuestEdit(activeEvent.guests, guestIndex, { name, phone, email });
+  const guests = isNew
+    ? appendGuest(activeEvent.guests, { name, phone, email })
+    : applyGuestEdit(activeEvent.guests, guestIndex, { name, phone, email });
   try {
-    const updated = await apiRequest(`/events?id=${encodeURIComponent(activeEvent.id)}`, {
-      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ guests })
-    });
-    if (!updated) throw new Error('הפרטים לא נשמרו. נסה/י שוב.');
-    activeEvent = updated;
-    editingGuestIndex = null;
-    renderGuestList();
-    toast('הפרטים עודכנו. שלחו את ההזמנה שוב לפרטים החדשים.');
+    await patchGuests(guests);
+    toast(isNew
+      ? `${name} נוסף/ה לאירוע. שלחו לו/ה את ההזמנה מהרשימה.`
+      : 'הפרטים עודכנו. שלחו את ההזמנה שוב לפרטים החדשים.');
   } catch (error) {
-    toast(error.message || 'לא הצלחנו לעדכן את פרטי המוזמן.');
+    toast(error.message || (isNew ? 'לא הצלחנו להוסיף את המוזמן.' : 'לא הצלחנו לעדכן את פרטי המוזמן.'));
     saveButton.disabled = false;
+  }
+};
+
+// One write path for every guest-list change, so the redraw can never be forgotten.
+const patchGuests = async (guests) => {
+  const updated = await apiRequest(`/events?id=${encodeURIComponent(activeEvent.id)}`, {
+    method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ guests })
+  });
+  if (!updated) throw new Error('השינוי לא נשמר. נסה/י שוב.');
+  activeEvent = updated;
+  editingGuestIndex = null;
+  renderGuestList();
+  renderDetailStats();
+  syncEventCardCount();
+  return updated;
+};
+
+const removeGuest = async (guestIndex) => {
+  const guest = activeEvent?.guests?.[guestIndex];
+  if (!guest) return;
+  if (!guestsCarryTokens(activeEvent.guests)) {
+    toast('פרטי המוזמנים לא נטענו במלואם. רענן/י את הדף לפני הסרה.');
+    return;
+  }
+  // Say out loud that a stored answer goes with them — the database prunes it, and a
+  // silent deletion is not something to spring on the organizer.
+  const answered = (activeEvent.responses || []).some((response) => response.guestId === guest.id);
+  const question = answered
+    ? `להסיר את ${guest.name} מהאירוע? גם התשובה שנשמרה עבורו/ה תימחק, וקישור ההזמנה שלו/ה יפסיק לעבוד.`
+    : `להסיר את ${guest.name} מהאירוע? קישור ההזמנה שלו/ה יפסיק לעבוד.`;
+  if (!window.confirm(question)) return;
+  try {
+    await patchGuests(removeGuestAt(activeEvent.guests, guestIndex));
+    toast(`${guest.name} הוסר/ה מהאירוע.`);
+  } catch (error) {
+    toast(error.message || 'לא הצלחנו להסיר את המוזמן.');
   }
 };
 
@@ -747,9 +799,12 @@ $('#detailGuests').onclick = (event) => {
 
   const editButton = event.target.closest('[data-guest-edit]');
   if (editButton) { editingGuestIndex = Number(editButton.dataset.guestIndex); renderGuestList(); return; }
+  if (event.target.closest('[data-guest-add]')) { editingGuestIndex = -1; renderGuestList(); return; }
   if (event.target.closest('[data-guest-cancel]')) { editingGuestIndex = null; renderGuestList(); return; }
   const saveButton = event.target.closest('[data-guest-save]');
   if (saveButton) { saveGuestEdit(Number(saveButton.dataset.guestSave)); return; }
+  const removeButton = event.target.closest('[data-guest-remove]');
+  if (removeButton) { removeGuest(Number(removeButton.dataset.guestIndex)); return; }
 
   const button = event.target.closest('[data-send]');
   if (!button) return;
@@ -762,6 +817,32 @@ $('#detailGuests').onclick = (event) => {
   markSent(button);
 };
 
+// Rendered from activeEvent so adding or removing a guest can redraw the tallies
+// without reloading the event.
+const renderDetailStats = () => {
+  const guests = activeEvent?.guests || [];
+  const responses = activeEvent?.responses || [];
+  const options = activeEvent?.options || [];
+  const stats = clear($('#detailStats'));
+  stats.append(el('div', { text: `השיבו: ${responses.length}/${guests.length} · ממתינים: ${Math.max(guests.length - responses.length, 0)}` }));
+  if (activeEvent?.finalSelection?.option) {
+    stats.append(el('div', { text: `מועד נבחר: ${activeEvent.finalSelection.option[0]} · ${activeEvent.finalSelection.option[1]}` }));
+  }
+  options.forEach((option, index) => {
+    const available = responses.filter((response) => response.answers[index]?.answer === 'yes').length;
+    stats.append(el('div', { text: `${option[0]} · ${option[1]} — ${available} יכולים/ות` }));
+  });
+};
+
+// The card in the grid shows a guest count, so it goes stale the moment one is
+// added or removed.
+const syncEventCardCount = () => {
+  if (!activeEvent) return;
+  const card = [...$$('.event-card')].find((candidate) => candidate.dataset.eventId === activeEvent.id);
+  const footer = card?.querySelector('.card-footer span');
+  if (footer) footer.textContent = `${activeEvent.guests.length} מוזמנים`;
+};
+
 const openEventDetails = (eventData, ownerView = Boolean(authUser && eventData.ownerId === authUser.id)) => {
   activeEvent = eventData.id ? eventData : null;
   $('#detailTitle').textContent = eventData.title;
@@ -769,8 +850,6 @@ const openEventDetails = (eventData, ownerView = Boolean(authUser && eventData.o
   const optionList = clear($('#detailOptions'));
   eventData.options.forEach(([date, time]) => optionList.append(el('div', { text: `${date} · ${time}` })));
   clear($('#detailGuests'));
-  const guests = eventData.guests || [];
-  const responses = eventData.responses || [];
   const isOwner = ownerView;
   $('#detailGuestsTab').classList.toggle('hidden', !isOwner);
   $('#detailStatsTab').classList.toggle('hidden', !isOwner);
@@ -782,26 +861,9 @@ const openEventDetails = (eventData, ownerView = Boolean(authUser && eventData.o
     : 'סגירת בחירה ושליחת זימונים';
   // For organizers, lead with the guest list—the primary next action after opening an existing event.
   setDetailsTab(isOwner ? 'guests' : 'details');
-  if (isOwner) {
-    const responded = responses.length;
-    const stats = clear($('#detailStats'));
-    const summary = document.createElement('div');
-    summary.textContent = `השיבו: ${responded}/${guests.length} · ממתינים: ${guests.length - responded}`;
-    stats.append(summary);
-    if (eventData.finalSelection?.option) {
-      const finalItem = document.createElement('div');
-      finalItem.textContent = `מועד נבחר: ${eventData.finalSelection.option[0]} · ${eventData.finalSelection.option[1]}`;
-      stats.append(finalItem);
-    }
-    eventData.options.forEach((option, index) => {
-      const available = responses.filter((response) => response.answers[index]?.answer === 'yes').length;
-      const item = document.createElement('div');
-      item.textContent = `${option[0]} · ${option[1]} — ${available} יכולים/ות`;
-      stats.append(item);
-    });
-  }
   detailsIsOwner = isOwner;
   editingGuestIndex = null;
+  if (isOwner) renderDetailStats();
   renderGuestList();
   show(detailsModal);
 };

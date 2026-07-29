@@ -9,15 +9,15 @@
 -- WHAT IT DROPS  (by name, deliberately narrow)
 --   table    public.responses
 --   table    public.events          <- cascades to their RLS policies
---   function public.invited_event      (all overloads)
---   function public.submit_response    (all overloads)
---   function public.stamp_guest_tokens (all overloads)
---   trigger  events_stamp_guests    <- goes with the table
+--   function public.invited_event           (all overloads)
+--   function public.submit_response         (all overloads)
+--   function public.stamp_guest_tokens      (all overloads)
+--   function public.prune_orphan_responses  (all overloads)
+--   triggers events_stamp_guests, events_prune_responses  <- go with the table
 --
 -- WHAT IT DOES NOT TOUCH
---   * Any other table in `public`. This project reportedly has four tables and
---     only two of them are Meetly's; the other two are left completely alone
---     because nobody has established what they hold.
+--   * Any other table in `public`. Objects are dropped by name, so anything that
+--     is not Meetly's is left completely alone.
 --   * The `auth` schema. Your user accounts survive a reset.
 --   * Storage buckets, extensions, roles.
 --
@@ -54,7 +54,7 @@
 --   select 'function', p.oid::regprocedure::text
 --     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
 --    where n.nspname = 'public'
---      and p.proname in ('invited_event','submit_response','stamp_guest_tokens');
+--      and p.proname in ('invited_event','submit_response','stamp_guest_tokens','prune_orphan_responses');
 
 
 -- ===================== STEP 2: CONFIRMATION REQUIRED ========================
@@ -85,7 +85,7 @@ begin
     from pg_proc p
     join pg_namespace n on n.oid = p.pronamespace
     where n.nspname = 'public'
-      and p.proname in ('invited_event', 'submit_response', 'stamp_guest_tokens')
+      and p.proname in ('invited_event', 'submit_response', 'stamp_guest_tokens', 'prune_orphan_responses')
   loop
     raise notice 'dropping function %', target.signature;
     execute format('drop function if exists %s cascade', target.signature);
@@ -113,7 +113,7 @@ end $$;
 --   select p.oid::regprocedure::text from pg_proc p
 --     join pg_namespace n on n.oid=p.pronamespace
 --    where n.nspname='public'
---      and p.proname in ('invited_event','submit_response','stamp_guest_tokens');
+--      and p.proname in ('invited_event','submit_response','stamp_guest_tokens','prune_orphan_responses');
 --
 --   select tablename, policyname, cmd from pg_policies
 --    where schemaname='public' order by tablename, policyname;

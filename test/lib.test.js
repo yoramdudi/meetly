@@ -7,7 +7,8 @@ const path = require('node:path');
 
 const {
   isoDate, daysFromNow, today, deadlinePassed, dateBadge, readableChoiceDate,
-  meetingMinutes, durationLabel, calendarStamp, calendarRange, normalizePhone,
+  meetingMinutes, durationLabel, calendarStamp, calendarRange, calendarLink,
+  icsEscape, icsFile, normalizePhone,
   guestContactValid, applyGuestEdit, guestsCarryTokens, removeGuestAt, appendGuest
 } = require('../lib.js');
 
@@ -69,6 +70,79 @@ test('calendarRange survives a DST boundary inside the meeting', () => {
 
 test('calendarRange rolls the date over midnight', () => {
   assert.equal(calendarRange('2026-08-03', '23:30', 90), '20260803T233000/20260804T010000');
+});
+
+// --- calendar link and .ics -------------------------------------------------
+
+const MEETING = {
+  title: 'פגישת תכנון, שלב ב',
+  date: '2026-08-03',
+  time: '10:00',
+  minutes: 45,
+  details: 'מארגן/ת: יורם\nטלפון: 0545555555'
+};
+
+test('calendarLink pins the wall clock to Asia/Jerusalem', () => {
+  const url = new URL(calendarLink(MEETING));
+  assert.equal(url.origin + url.pathname, 'https://calendar.google.com/calendar/render');
+  assert.equal(url.searchParams.get('action'), 'TEMPLATE');
+  assert.equal(url.searchParams.get('dates'), '20260803T100000/20260803T104500');
+  assert.equal(url.searchParams.get('ctz'), 'Asia/Jerusalem');
+  assert.equal(url.searchParams.get('text'), MEETING.title);
+});
+
+test('calendarLink survives missing optional text', () => {
+  const url = new URL(calendarLink({ date: '2026-08-03', time: '10:00', minutes: 30 }));
+  assert.equal(url.searchParams.get('text'), '');
+  assert.equal(url.searchParams.get('details'), '');
+});
+
+test('icsEscape escapes the RFC 5545 special characters', () => {
+  assert.equal(icsEscape('a,b'), 'a\\,b');
+  assert.equal(icsEscape('a;b'), 'a\\;b');
+  assert.equal(icsEscape('a\\b'), 'a\\\\b');
+  assert.equal(icsEscape('a\nb'), 'a\\nb');
+  assert.equal(icsEscape('a\r\nb'), 'a\\nb');
+  assert.equal(icsEscape(null), '');
+});
+
+test('icsFile emits a well-formed VEVENT', () => {
+  const text = icsFile({
+    ...MEETING, description: MEETING.details,
+    uid: 'meetly-abc-1@meetly', now: new Date(Date.UTC(2026, 6, 30, 9, 5, 3))
+  });
+  assert.ok(text.startsWith('BEGIN:VCALENDAR\r\n'));
+  assert.ok(text.endsWith('END:VCALENDAR\r\n'));
+  assert.ok(text.includes('\r\nVERSION:2.0\r\n'));
+  assert.ok(text.includes('\r\nUID:meetly-abc-1@meetly\r\n'));
+  assert.ok(text.includes('\r\nDTSTAMP:20260730T090503Z\r\n'));
+  assert.ok(text.includes('\r\nDTSTART:20260803T100000\r\n'));
+  assert.ok(text.includes('\r\nDTEND:20260803T104500\r\n'));
+});
+
+test('icsFile uses CRLF throughout, never a bare newline', () => {
+  const text = icsFile({ ...MEETING, description: '', uid: 'u', now: new Date(Date.UTC(2026, 0, 1)) });
+  assert.equal(text.split('\r\n').length - 1, text.split('\n').length - 1,
+    'every \\n must be preceded by \\r');
+});
+
+test('icsFile escapes the summary so a comma cannot split the field', () => {
+  const text = icsFile({ ...MEETING, description: 'a;b', uid: 'u', now: new Date(Date.UTC(2026, 0, 1)) });
+  assert.ok(text.includes('SUMMARY:פגישת תכנון\\, שלב ב'));
+  assert.ok(text.includes('DESCRIPTION:a\\;b'));
+});
+
+test('icsFile keeps a multi-line description on one folded-free line', () => {
+  const text = icsFile({ ...MEETING, description: 'line1\nline2', uid: 'u', now: new Date(Date.UTC(2026, 0, 1)) });
+  assert.ok(text.includes('DESCRIPTION:line1\\nline2\r\n'), 'newlines escaped, not emitted raw');
+});
+
+test('icsFile start and end agree with calendarLink', () => {
+  // Both must describe the same meeting; they are the two halves of one feature.
+  const [start, end] = new URL(calendarLink(MEETING)).searchParams.get('dates').split('/');
+  const text = icsFile({ ...MEETING, description: '', uid: 'u', now: new Date(Date.UTC(2026, 0, 1)) });
+  assert.ok(text.includes(`DTSTART:${start}`));
+  assert.ok(text.includes(`DTEND:${end}`));
 });
 
 test('normalizePhone converts Israeli numbers to international form', () => {

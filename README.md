@@ -79,3 +79,8 @@ the live project. Reconcile before applying.
   with UTC arithmetic so the browser's timezone cannot shift them.
 - **One send per click.** Invites are never dispatched in a loop — pop-up blockers kill
   everything after the first window. The guest list has a send button per guest.
+- **Calendar goes out as a link, not a file.** `api.whatsapp.com/send?text=` and
+  `mailto:` carry text only, so the confirmed-booking message embeds a Google Calendar
+  link. The `.ics` download exists for Outlook/Apple and for attaching by hand; its
+  times are RFC 5545 floating values, so a guest abroad sees the organizer's wall
+  clock rather than a conversion.

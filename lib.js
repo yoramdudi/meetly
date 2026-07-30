@@ -83,6 +83,56 @@
     return `${calendarStamp(start)}/${calendarStamp(end)}`;
   };
 
+  const calendarLink = ({ title, date, time, minutes, details }) => {
+    const query = new URLSearchParams({
+      action: 'TEMPLATE',
+      text: title || '',
+      dates: calendarRange(date, time, minutes),
+      details: details || '',
+      // The stamps above are plain wall-clock digits; this is what fixes their meaning.
+      ctz: 'Asia/Jerusalem'
+    });
+    return `https://calendar.google.com/calendar/render?${query.toString()}`;
+  };
+
+  // ---------------------------------------------------------------- .ics
+  //
+  // Times are emitted as RFC 5545 "floating" values — no TZID and no trailing Z — so
+  // every calendar client shows the wall clock the organizer picked. For this app's
+  // audience that is what is wanted, and it avoids shipping a VTIMEZONE block or a
+  // bare Olson name that stricter parsers reject. The trade-off: a guest in another
+  // timezone sees 10:00 rather than 10:00 Israel time converted to theirs.
+
+  const icsEscape = (value) => String(value ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/;/g, '\\;')
+    .replace(/,/g, '\\,')
+    .replace(/\r?\n/g, '\\n');
+
+  const icsStamp = (date) => `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}`
+    + `T${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}Z`;
+
+  const icsFile = ({ title, date, time, minutes, description, uid, now = new Date() }) => {
+    const [start, end] = calendarRange(date, time, minutes).split('/');
+    // CRLF is mandatory in RFC 5545; some clients reject bare newlines.
+    return [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//Meetly//Meetly//HE',
+      'CALSCALE:GREGORIAN',
+      'METHOD:PUBLISH',
+      'BEGIN:VEVENT',
+      `UID:${icsEscape(uid)}`,
+      `DTSTAMP:${icsStamp(now)}`,
+      `DTSTART:${start}`,
+      `DTEND:${end}`,
+      `SUMMARY:${icsEscape(title)}`,
+      `DESCRIPTION:${icsEscape(description)}`,
+      'END:VEVENT',
+      'END:VCALENDAR'
+    ].join('\r\n') + '\r\n';
+  };
+
   // ---------------------------------------------------------------- phone
   //
   // WhatsApp needs a full international number with no punctuation. The old rule only
@@ -133,7 +183,8 @@
 
   return {
     isoDate, daysFromNow, today, deadlinePassed, dateBadge, readableChoiceDate,
-    meetingMinutes, durationLabel, calendarStamp, calendarRange, normalizePhone,
+    meetingMinutes, durationLabel, calendarStamp, calendarRange, calendarLink,
+    icsEscape, icsFile, normalizePhone,
     guestContactValid, applyGuestEdit, guestsCarryTokens, removeGuestAt, appendGuest
   };
 }));

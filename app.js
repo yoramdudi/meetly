@@ -5,7 +5,7 @@ const $$ = (selector) => document.querySelectorAll(selector);
 // under Node. Destructured here to keep the call sites below unqualified.
 const {
   daysFromNow, deadlinePassed, dateBadge, readableChoiceDate,
-  meetingMinutes, durationLabel, calendarRange, normalizePhone,
+  meetingMinutes, durationLabel, calendarLink, icsFile, normalizePhone,
   guestContactValid, applyGuestEdit, guestsCarryTokens, removeGuestAt, appendGuest
 } = window.MeetlyLib;
 
@@ -27,7 +27,7 @@ const el = (tag, props = {}, children = []) => {
 };
 const clear = (node) => { node.textContent = ''; return node; };
 
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 $('#appVersion').textContent = `גרסה ${APP_VERSION}`;
 const modal = $('#eventModal');
 const backdrop = $('#modalBackdrop');
@@ -84,6 +84,13 @@ calendarButton.style.width = '100%';
 calendarButton.style.marginTop = '10px';
 calendarButton.textContent = 'הוספה ליומן Google';
 $('#eventDetails').append(calendarButton);
+// A downloadable file for Outlook/Apple, and for attaching to a message by hand —
+// WhatsApp and mailto links cannot carry an attachment.
+const icsButton = el('button', {
+  type: 'button', id: 'downloadIcs', class: 'text-button hidden',
+  text: '⤓ הורדת קובץ יומן (.ics)', style: { width: '100%', marginTop: '6px' }
+});
+$('#eventDetails').append(icsButton);
 const api = '/.netlify/functions';
 const invitedEventsKey = 'meetly-invited-events';
 const profileKey = 'meetly-profile';
@@ -481,23 +488,64 @@ const sendReminder = (eventData, guest) => {
   const message = `תזכורת קטנה 🙏\nעדיין נשמרה הבחירה שלך לתיאום הפגישה בנושא: ${eventData.title}\n\nאנא הקש/י לבחירת זמן מתאים:\n${inviteUrlFor(eventData, guest)}`;
   window.open(`https://api.whatsapp.com/send?phone=${guest.phone}&text=${encodeURIComponent(message)}`, '_blank', 'noopener');
 };
-const sendFinalInvite = (eventData, guest) => {
-  if (!guest.phone) return;
-  const [date, time] = eventData.finalSelection.option;
-  const message = `פגישה נקבעה!\n\nנושא: ${eventData.title}\nמועד: ${date} בשעה ${time}\nמשך: ${durationLabel(eventData.duration)}\nמארגן/ת: ${eventData.organizer.name}\nטלפון: ${eventData.organizer.phone}`;
-  window.open(`https://api.whatsapp.com/send?phone=${guest.phone}&text=${encodeURIComponent(message)}`, '_blank', 'noopener');
-};
-const addToCalendar = (eventData) => {
+// Shared by the calendar button, the .ics download and the final invite messages, so
+// all three describe the same meeting.
+const calendarFieldsFor = (eventData) => {
   const [date, time] = eventData.finalSelection.option;
   const guests = eventData.guests.map((guest) => guest.name).join(', ');
-  const query = new URLSearchParams({
-    action: 'TEMPLATE', text: eventData.title,
-    dates: calendarRange(date, time, meetingMinutes(eventData.duration)),
-    details: `מארגן/ת: ${eventData.organizer.name}\nטלפון: ${eventData.organizer.phone}\nמשתתפים: ${guests}`,
-    // The stamps above are plain wall-clock digits; this is what fixes their meaning.
-    ctz: 'Asia/Jerusalem'
+  return {
+    title: eventData.title,
+    date,
+    time,
+    minutes: meetingMinutes(eventData.duration),
+    details: `מארגן/ת: ${eventData.organizer.name}\nטלפון: ${eventData.organizer.phone}\nמשתתפים: ${guests}`
+  };
+};
+
+const finalMessageFor = (eventData) => {
+  const [date, time] = eventData.finalSelection.option;
+  const fields = calendarFieldsFor(eventData);
+  // WhatsApp and mailto: carry text only — a file cannot be attached from a link — so
+  // the guest gets a one-tap calendar link instead.
+  return `פגישה נקבעה!\n\nנושא: ${eventData.title}\nמועד: ${date} בשעה ${time}\nמשך: ${durationLabel(eventData.duration)}\nמארגן/ת: ${eventData.organizer.name}\nטלפון: ${eventData.organizer.phone}\n\nלהוספה ליומן:\n${calendarLink(fields)}`;
+};
+
+const sendFinalInvite = (eventData, guest) => {
+  if (!guest.phone) return;
+  window.open(`https://api.whatsapp.com/send?phone=${guest.phone}&text=${encodeURIComponent(finalMessageFor(eventData))}`, '_blank', 'noopener');
+};
+
+const sendFinalEmail = (eventData, guest) => {
+  if (!guest.email) return;
+  const subject = `פגישה נקבעה: ${eventData.title}`;
+  const link = document.createElement('a');
+  link.href = `mailto:${guest.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(`שלום ${guest.name},\n\n${finalMessageFor(eventData)}`)}`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+};
+
+const addToCalendar = (eventData) => {
+  window.open(calendarLink(calendarFieldsFor(eventData)), '_blank', 'noopener');
+};
+
+// A real file, for Outlook/Apple users and for attaching to a message by hand.
+const downloadIcs = (eventData) => {
+  const fields = calendarFieldsFor(eventData);
+  const text = icsFile({
+    ...fields,
+    description: fields.details,
+    // Deterministic, so re-downloading updates the entry instead of duplicating it.
+    uid: `meetly-${eventData.id}-${eventData.finalSelection.index}@meetly`
   });
-  window.open(`https://calendar.google.com/calendar/render?${query.toString()}`, '_blank', 'noopener');
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/calendar;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${(eventData.title || 'meetly').replace(/[\\/:*?"<>|]/g, '-')}.ics`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 };
 
 $('#eventForm').onsubmit = async (event) => {
@@ -626,6 +674,7 @@ const openFinalize = (eventData) => {
 
 finalizeButton.onclick = () => { if (activeEvent) openFinalize(activeEvent); };
 calendarButton.onclick = () => { if (activeEvent?.finalSelection) addToCalendar(activeEvent); };
+icsButton.onclick = () => { if (activeEvent?.finalSelection) downloadIcs(activeEvent); };
 $('#confirmFinalize').onclick = async () => {
   const selected = $('#finalizeOptions input:checked');
   if (!finalizeEvent || !selected) return;
@@ -673,7 +722,8 @@ const guestDisplayRow = (guest, guestIndex, response, isFinalized) => {
   }
   if (guest.email) {
     item.append(' ', el('button', {
-      type: 'button', class: 'text-button', dataset: { ...ref, send: 'email' }, text: 'שליחה באימייל'
+      type: 'button', class: 'text-button', dataset: { ...ref, send: 'email' },
+      text: isFinalized ? 'שליחת הזימון באימייל' : 'שליחה באימייל'
     }));
   }
   item.append(' ', el('button', {
@@ -810,8 +860,12 @@ $('#detailGuests').onclick = (event) => {
   if (!button) return;
   const guest = activeEvent.guests[Number(button.dataset.guestIndex)];
   if (!guest) return;
-  if (button.dataset.send === 'email') sendEmailInvite(activeEvent, guest);
-  else if (button.dataset.action === 'final') sendFinalInvite(activeEvent, guest);
+  // Once a slot is locked, both channels carry the confirmed booking rather than a
+  // request for availability.
+  if (button.dataset.send === 'email') {
+    if (activeEvent.finalSelection) sendFinalEmail(activeEvent, guest);
+    else sendEmailInvite(activeEvent, guest);
+  } else if (button.dataset.action === 'final') sendFinalInvite(activeEvent, guest);
   else if (button.dataset.action === 'reminder') sendReminder(activeEvent, guest);
   else sendAvailabilityInvite(activeEvent, guest);
   markSent(button);
@@ -856,6 +910,7 @@ const openEventDetails = (eventData, ownerView = Boolean(authUser && eventData.o
   $('#openResponseFromDetails').classList.toggle('hidden', Boolean(isOwner));
   finalizeButton.classList.toggle('hidden', !isOwner);
   calendarButton.classList.toggle('hidden', !eventData.finalSelection);
+  icsButton.classList.toggle('hidden', !eventData.finalSelection);
   finalizeButton.textContent = isOwner && eventData.finalSelection
     ? 'עדכון המועד ושליחה מחדש'
     : 'סגירת בחירה ושליחת זימונים';

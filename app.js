@@ -6,7 +6,8 @@ const $$ = (selector) => document.querySelectorAll(selector);
 const {
   daysFromNow, deadlinePassed, dateBadge, readableChoiceDate,
   meetingMinutes, durationLabel, calendarLink, icsFile, normalizePhone,
-  guestContactValid, applyGuestEdit, guestsCarryTokens, removeGuestAt, appendGuest
+  guestContactValid, applyGuestEdit, guestsCarryTokens, removeGuestAt, appendGuest,
+  describeEventProblem, eventSavedMessage
 } = window.MeetlyLib;
 
 // Every element in this file is built through the DOM rather than from an HTML
@@ -27,7 +28,7 @@ const el = (tag, props = {}, children = []) => {
 };
 const clear = (node) => { node.textContent = ''; return node; };
 
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.3.1';
 $('#appVersion').textContent = `גרסה ${APP_VERSION}`;
 const modal = $('#eventModal');
 const backdrop = $('#modalBackdrop');
@@ -562,8 +563,10 @@ $('#eventForm').onsubmit = async (event) => {
     row.querySelector('[type=time]').value
   ]);
 
-  if (!title || !organizer.name || !organizer.phone || guests.some((guest) => !guest.name || (!guest.phone && !guest.email))) {
-    toast('יש למלא שם וטלפון או אימייל לכל מוזמן.');
+  // Name the actual problem instead of blaming the guest list for everything.
+  const problem = describeEventProblem({ title, organizer, guests });
+  if (problem) {
+    toast(problem);
     return;
   }
 
@@ -580,7 +583,7 @@ $('#eventForm').onsubmit = async (event) => {
     // Sending in a loop would trip the pop-up blocker after the first window, so the
     // guest list is opened instead and each invite goes out on its own click.
     openEventDetails(createdEvent, true);
-    toast(`האירוע נשמר. שלחו הזמנה לכל אחד מ-${createdEvent.guests.length} המוזמנים מהרשימה.`);
+    toast(eventSavedMessage(createdEvent.guests.length));
   } catch {
     toast('לא הצלחנו לשמור את האירוע. נסה/י שוב.');
   } finally {

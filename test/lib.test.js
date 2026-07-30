@@ -9,7 +9,8 @@ const {
   isoDate, daysFromNow, today, deadlinePassed, dateBadge, readableChoiceDate,
   meetingMinutes, durationLabel, calendarStamp, calendarRange, calendarLink,
   icsEscape, icsFile, normalizePhone,
-  guestContactValid, applyGuestEdit, guestsCarryTokens, removeGuestAt, appendGuest
+  guestContactValid, applyGuestEdit, guestsCarryTokens, removeGuestAt, appendGuest,
+  describeEventProblem, eventSavedMessage
 } = require('../lib.js');
 
 // The version is declared twice — the browser cannot read package.json without a
@@ -318,6 +319,71 @@ test('appendGuest deliberately carries no id or token', () => {
 
 test('appendGuest works on an event with no guests yet', () => {
   assert.equal(appendGuest(null, { name: 'רון', phone: '', email: 'ron@example.com' }).length, 1);
+});
+
+// --- event-form messaging ----------------------------------------------------
+// One generic sentence used to cover five different failures, so an empty title
+// reported a guest problem. Each branch is pinned here.
+
+const VALID_FORM = () => ({
+  title: 'פגישת תכנון',
+  organizer: { name: 'יורם', phone: '0545555555' },
+  guests: [{ name: 'דנה', phone: '972541111111', email: '' }]
+});
+
+test('describeEventProblem passes a complete form', () => {
+  assert.equal(describeEventProblem(VALID_FORM()), null);
+});
+
+test('describeEventProblem blames the title, not the guests', () => {
+  const form = { ...VALID_FORM(), title: '' };
+  assert.match(describeEventProblem(form), /שם לאירוע/);
+  assert.equal(describeEventProblem({ ...VALID_FORM(), title: '   ' }), describeEventProblem(form),
+    'whitespace counts as empty');
+});
+
+test('describeEventProblem points at the organizer profile', () => {
+  assert.match(describeEventProblem({ ...VALID_FORM(), organizer: { name: '', phone: '05' } }), /שם המארגן/);
+  assert.match(describeEventProblem({ ...VALID_FORM(), organizer: { name: 'יורם', phone: '' } }), /טלפון המארגן/);
+});
+
+test('describeEventProblem reports a nameless guest', () => {
+  const form = { ...VALID_FORM(), guests: [{ name: '', phone: '972541111111', email: '' }] };
+  assert.match(describeEventProblem(form), /שם לכל מוזמן/);
+});
+
+test('describeEventProblem names the guest who has no contact channel', () => {
+  const form = { ...VALID_FORM(), guests: [{ name: 'דנה', phone: '', email: '' }] };
+  assert.match(describeEventProblem(form), /דנה/, 'says which guest, not just "a guest"');
+});
+
+test('describeEventProblem accepts either channel alone', () => {
+  assert.equal(describeEventProblem({ ...VALID_FORM(), guests: [{ name: 'דנה', phone: '', email: 'd@example.com' }] }), null);
+  assert.equal(describeEventProblem({ ...VALID_FORM(), guests: [{ name: 'דנה', phone: '972541111111', email: '' }] }), null);
+});
+
+test('describeEventProblem allows an event with no guests yet', () => {
+  // They can be added later from the details screen.
+  assert.equal(describeEventProblem({ ...VALID_FORM(), guests: [] }), null);
+});
+
+test('describeEventProblem checks the title before the guests', () => {
+  // Order matters: report the first thing the organizer should fix.
+  const broken = { title: '', organizer: { name: '', phone: '' }, guests: [{ name: '', phone: '', email: '' }] };
+  assert.match(describeEventProblem(broken), /שם לאירוע/);
+});
+
+test('describeEventProblem survives a missing argument', () => {
+  assert.match(describeEventProblem(), /שם לאירוע/);
+  assert.match(describeEventProblem({}), /שם לאירוע/);
+});
+
+test('eventSavedMessage reads correctly for none, one and many', () => {
+  assert.match(eventSavedMessage(0), /הוסיפו מוזמנים/);
+  assert.doesNotMatch(eventSavedMessage(0), /0/, 'never says "0 guests"');
+  assert.doesNotMatch(eventSavedMessage(1), /1 המוזמנים/, 'never says "1 of the guests"');
+  assert.match(eventSavedMessage(1), /את ההזמנה/);
+  assert.match(eventSavedMessage(4), /4 המוזמנים/);
 });
 
 test('guestContactValid requires a name and one channel', () => {

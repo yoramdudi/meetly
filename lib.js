@@ -155,6 +155,30 @@
   const guestContactValid = ({ name, phone, email }) => Boolean(String(name || '').trim())
     && Boolean(String(phone || '').trim() || String(email || '').trim());
 
+  const filled = (value) => Boolean(String(value ?? '').trim());
+
+  // Returns the first thing wrong with a new event, or null. One generic sentence used
+  // to cover five different failures, so an empty title reported a guest problem.
+  const describeEventProblem = ({ title, organizer, guests } = {}) => {
+    if (!filled(title)) return 'יש למלא שם לאירוע.';
+    if (!filled(organizer?.name)) return 'חסר שם המארגן/ת. אפשר להשלים בפרופיל.';
+    if (!filled(organizer?.phone)) return 'חסר טלפון המארגן/ת. אפשר להשלים בפרופיל.';
+    const list = guests || [];
+    const nameless = list.find((guest) => !filled(guest?.name));
+    if (nameless) return 'יש למלא שם לכל מוזמן.';
+    const unreachable = list.find((guest) => !filled(guest?.phone) && !filled(guest?.email));
+    if (unreachable) return `צריך טלפון או אימייל עבור ${unreachable.name}.`;
+    return null;
+  };
+
+  // Guests can now be added after creation, so an event with none is allowed — it just
+  // needs different wording from one with several.
+  const eventSavedMessage = (guestCount) => {
+    if (!guestCount) return 'האירוע נשמר. הוסיפו מוזמנים כדי לשלוח הזמנות.';
+    if (guestCount === 1) return 'האירוע נשמר. שלחו את ההזמנה מרשימת המוזמנים.';
+    return `האירוע נשמר. שלחו הזמנה לכל אחד מ-${guestCount} המוזמנים ברשימה.`;
+  };
+
   // Correcting a guest's contact details must never touch `id` or `inviteToken`:
   // the id keys that guest's stored response, and the token is embedded in every
   // invite link already sent. Only the three editable fields are replaced.
@@ -185,6 +209,7 @@
     isoDate, daysFromNow, today, deadlinePassed, dateBadge, readableChoiceDate,
     meetingMinutes, durationLabel, calendarStamp, calendarRange, calendarLink,
     icsEscape, icsFile, normalizePhone,
-    guestContactValid, applyGuestEdit, guestsCarryTokens, removeGuestAt, appendGuest
+    guestContactValid, applyGuestEdit, guestsCarryTokens, removeGuestAt, appendGuest,
+    describeEventProblem, eventSavedMessage
   };
 }));

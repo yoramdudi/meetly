@@ -92,7 +92,6 @@ const icsButton = el('button', {
   text: '⤓ הורדת קובץ יומן (.ics)', style: { width: '100%', marginTop: '6px' }
 });
 $('#eventDetails').append(icsButton);
-const api = '/.netlify/functions';
 const invitedEventsKey = 'meetly-invited-events';
 const profileKey = 'meetly-profile';
 let activeEvent = null;
@@ -174,16 +173,11 @@ $('#installApp').onclick = async () => {
 // Registered relative to the document so the app works under a sub-path deploy (e.g. /meetly/).
 if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('./service-worker.js').catch(() => {}));
 
-const netlifyRequest = async (path, options) => {
-  const response = await fetch(`${api}${path}`, options);
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.error || 'Request failed');
-  }
-  return response.json();
-};
+// Routes the app's own request vocabulary onto the Supabase adapter. This used to fall
+// back to a set of Netlify functions; index.html always loads supabase-client.js, so
+// that path never ran and is gone. An unrouted path is a programming error, not a
+// request to send somewhere else.
 const apiRequest = async (path, options = {}) => {
-  if (!window.MeetlyData) return netlifyRequest(path, options);
   const method = options.method || 'GET';
   const query = new URLSearchParams(path.split('?')[1] || '');
   const id = query.get('id');
@@ -212,7 +206,7 @@ const apiRequest = async (path, options = {}) => {
     return updated;
   }
   if (path === '/responses' && method === 'POST') { const body = JSON.parse(options.body); return MeetlyData.submitResponse(body.eventId, body.inviteToken, body.answers); }
-  return netlifyRequest(path, options);
+  throw new Error(`Unrouted request: ${method} ${path}`);
 };
 
 const addEventToList = (event, target = '#ownedEvents', role = 'owner') => {
@@ -366,7 +360,7 @@ const logoutButton = el('button', { type: 'button', class: 'text-button hidden',
 profileModal.append(logoutButton);
 logoutButton.onclick = async () => {
   logoutButton.disabled = true;
-  try { await window.MeetlyData?.signOut(); } catch { /* clear locally regardless */ }
+  try { await MeetlyData.signOut(); } catch { /* clear locally regardless */ }
   [profileKey, invitedEventsKey].forEach((key) => localStorage.removeItem(key));
   sessionStorage.removeItem('meetly-pending-invite');
   location.replace(location.pathname);
@@ -414,11 +408,6 @@ $$('.nav-link').forEach((link) => {
     $('.sidebar').classList.remove('mobile-open');
     backdrop.classList.add('hidden');
     if (target === '#new') { $('#createButton').click(); return; }
-    if (target === '#contacts') {
-      $('#createButton').click();
-      if (authUser && profile?.phone) showWizardStep(2);
-      return;
-    }
     $('#ownedEvents').scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 });
@@ -1133,39 +1122,26 @@ const renderAuthMode = () => {
 };
 
 $('#authToggle').onclick = () => { signupMode = !signupMode; renderAuthMode(); };
-$('#googleLogin').onclick = () => {
-  if (window.MeetlyData?.signInWithGoogle) { MeetlyData.signInWithGoogle(); return; }
-  toast('התחברות Google אינה זמינה כרגע.');
-};
+$('#googleLogin').onclick = () => MeetlyData.signInWithGoogle();
 $('#authForm').onsubmit = async (event) => {
   event.preventDefault();
   const submit = $('#authSubmit');
   submit.disabled = true;
   try {
-    if (window.MeetlyData) {
-      if (signupMode) {
-        await MeetlyData.signUp($('#authEmail').value.trim(), $('#authPassword').value, $('#authName').value.trim());
-        toast('נשלח אימות לדוא״ל. לאחר האישור התחברו כאן.');
-        signupMode = false; renderAuthMode(); return;
-      }
-      authUser = await MeetlyData.signIn($('#authEmail').value.trim(), $('#authPassword').value);
-      if (!profile && authUser?.user_metadata?.name) profile = { name: authUser.user_metadata.name, phone: '' };
-      applyProfile(); hide(); if (!profile?.phone) show(profileModal); loadEvents(); return;
-    }
-    const result = await apiRequest('/auth', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ action: signupMode ? 'signup' : 'login', email: $('#authEmail').value.trim(), password: $('#authPassword').value, name: $('#authName').value.trim() })
-    });
-    if (result.confirmationRequired) {
-      toast('נשלח אימות לדוא״ל. לחצו על הקישור ואז התחברו.');
+    if (signupMode) {
+      await MeetlyData.signUp($('#authEmail').value.trim(), $('#authPassword').value, $('#authName').value.trim());
+      toast('נשלח אימות לדוא״ל. לאחר האישור התחברו כאן.');
       signupMode = false;
       renderAuthMode();
       return;
     }
-    authUser = result.user;
-    if (!profile && authUser?.name) profile = { name: authUser.name, phone: '' };
+    authUser = await MeetlyData.signIn($('#authEmail').value.trim(), $('#authPassword').value);
+    if (!profile) profile = { name: displayName(authUser, null), phone: '' };
     applyProfile();
     hide();
+    // Signing in from an invite link has to land on the invite, not the dashboard.
+    // Only the removed Netlify branch did this, so the live path dropped the guest
+    // onto an empty event list instead of the times they were asked about.
     if (isInvitationLink()) {
       await loadInvitation();
       return;
@@ -1182,39 +1158,18 @@ const init = async () => {
   resetEventFormDates();
   renderAuthMode();
   applyProfile();
-  if (window.MeetlyData) {
-    // A refresh that cannot be recovered means the session is over: say so and ask
-    // for a fresh login instead of letting every later call fail opaquely.
-    MeetlyData.onSessionExpired = () => {
-      authUser = null;
-      applyProfile();
-      hide();
-      show(authModal);
-      toast('פג תוקף ההתחברות. יש להתחבר מחדש.');
-    };
-  }
-  if (window.MeetlyData?.finishGoogleLogin) {
-    try { authUser = await MeetlyData.finishGoogleLogin(); } catch { authUser = null; }
-  }
-  const oauthParams = new URLSearchParams(location.hash.slice(1));
-  if (oauthParams.get('access_token')) {
-    try {
-      authUser = (await apiRequest('/auth', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ action: 'oauth-callback', accessToken: oauthParams.get('access_token') })
-      })).user;
-      const pendingInvite = sessionStorage.getItem('meetly-pending-invite');
-      sessionStorage.removeItem('meetly-pending-invite');
-      history.replaceState(null, '', pendingInvite ? `${location.pathname}${pendingInvite}#respond` : `${location.pathname}${location.search}`);
-    } catch (error) {
-      toast(error.message || 'ההתחברות עם Google נכשלה.');
-    }
-  }
-  if (!authUser) {
-    authUser = window.MeetlyData?.currentUser() || null;
-    // Only probe the Netlify session endpoint when there is no Supabase adapter to ask.
-    if (!authUser && !window.MeetlyData) { try { authUser = (await apiRequest('/auth')).user; } catch { authUser = null; } }
-  }
+  // A refresh that cannot be recovered means the session is over: say so and ask
+  // for a fresh login instead of letting every later call fail opaquely.
+  MeetlyData.onSessionExpired = () => {
+    authUser = null;
+    applyProfile();
+    hide();
+    show(authModal);
+    toast('פג תוקף ההתחברות. יש להתחבר מחדש.');
+  };
+  // Consumes the OAuth fragment if this load is a return from Google; null otherwise.
+  try { authUser = await MeetlyData.finishGoogleLogin(); } catch { authUser = null; }
+  if (!authUser) authUser = MeetlyData.currentUser();
   applyProfile();
   if (isInvitationLink()) {
     if (authUser) await loadInvitation();

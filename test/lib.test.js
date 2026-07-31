@@ -8,9 +8,9 @@ const path = require('node:path');
 const {
   isoDate, daysFromNow, today, deadlinePassed, dateBadge, readableChoiceDate,
   meetingMinutes, durationLabel, calendarStamp, calendarRange, calendarLink,
-  icsEscape, icsFile, normalizePhone,
-  guestContactValid, applyGuestEdit, guestsCarryTokens, removeGuestAt, appendGuest,
-  describeEventProblem, eventSavedMessage
+  icsEscape, icsFile, normalizePhone, displayName, emailLooksValid,
+  applyGuestEdit, guestsCarryTokens, removeGuestAt, appendGuest,
+  describeGuestProblem, describeOptionsProblem, describeEventProblem, eventSavedMessage
 } = require('../lib.js');
 
 // The version is declared twice — the browser cannot read package.json without a
@@ -325,57 +325,135 @@ test('appendGuest works on an event with no guests yet', () => {
 // One generic sentence used to cover five different failures, so an empty title
 // reported a guest problem. Each branch is pinned here.
 
+// Every call pins "today" so the future-date rules cannot start failing on their own
+// the day the fixtures age out.
+const TODAY = '2026-03-01';
+
 const VALID_FORM = () => ({
   title: 'פגישת תכנון',
   organizer: { name: 'יורם', phone: '0545555555' },
-  guests: [{ name: 'דנה', phone: '972541111111', email: '' }]
+  guests: [{ name: 'דנה', phone: '972541111111', email: '' }],
+  options: [['2026-03-10', '10:00'], ['2026-03-11', '14:00']],
+  deadline: '2026-03-09'
 });
+const problem = (patch) => describeEventProblem({ ...VALID_FORM(), ...patch }, TODAY);
 
 test('describeEventProblem passes a complete form', () => {
-  assert.equal(describeEventProblem(VALID_FORM()), null);
+  assert.equal(problem({}), null);
 });
 
 test('describeEventProblem blames the title, not the guests', () => {
-  const form = { ...VALID_FORM(), title: '' };
-  assert.match(describeEventProblem(form), /שם לאירוע/);
-  assert.equal(describeEventProblem({ ...VALID_FORM(), title: '   ' }), describeEventProblem(form),
-    'whitespace counts as empty');
+  assert.match(problem({ title: '' }), /שם לאירוע/);
+  assert.equal(problem({ title: '   ' }), problem({ title: '' }), 'whitespace counts as empty');
 });
 
 test('describeEventProblem points at the organizer profile', () => {
-  assert.match(describeEventProblem({ ...VALID_FORM(), organizer: { name: '', phone: '05' } }), /שם המארגן/);
-  assert.match(describeEventProblem({ ...VALID_FORM(), organizer: { name: 'יורם', phone: '' } }), /טלפון המארגן/);
+  assert.match(problem({ organizer: { name: '', phone: '05' } }), /שם המארגן/);
+  assert.match(problem({ organizer: { name: 'יורם', phone: '' } }), /טלפון המארגן/);
 });
 
 test('describeEventProblem reports a nameless guest', () => {
-  const form = { ...VALID_FORM(), guests: [{ name: '', phone: '972541111111', email: '' }] };
-  assert.match(describeEventProblem(form), /שם לכל מוזמן/);
+  assert.match(problem({ guests: [{ name: '', phone: '972541111111', email: '' }] }), /שם לכל מוזמן/);
 });
 
 test('describeEventProblem names the guest who has no contact channel', () => {
-  const form = { ...VALID_FORM(), guests: [{ name: 'דנה', phone: '', email: '' }] };
-  assert.match(describeEventProblem(form), /דנה/, 'says which guest, not just "a guest"');
+  assert.match(problem({ guests: [{ name: 'דנה', phone: '', email: '' }] }), /דנה/,
+    'says which guest, not just "a guest"');
 });
 
 test('describeEventProblem accepts either channel alone', () => {
-  assert.equal(describeEventProblem({ ...VALID_FORM(), guests: [{ name: 'דנה', phone: '', email: 'd@example.com' }] }), null);
-  assert.equal(describeEventProblem({ ...VALID_FORM(), guests: [{ name: 'דנה', phone: '972541111111', email: '' }] }), null);
+  assert.equal(problem({ guests: [{ name: 'דנה', phone: '', email: 'd@example.com' }] }), null);
+  assert.equal(problem({ guests: [{ name: 'דנה', phone: '972541111111', email: '' }] }), null);
 });
 
 test('describeEventProblem allows an event with no guests yet', () => {
   // They can be added later from the details screen.
-  assert.equal(describeEventProblem({ ...VALID_FORM(), guests: [] }), null);
+  assert.equal(problem({ guests: [] }), null);
 });
 
-test('describeEventProblem checks the title before the guests', () => {
+// A guest whose e-mail is a typo gets an invite that goes nowhere, and the organizer
+// never learns why they did not answer.
+test('describeEventProblem names the guest whose e-mail is malformed', () => {
+  const message = problem({ guests: [{ name: 'דנה', phone: '', email: 'dana@' }] });
+  assert.match(message, /דנה/);
+  assert.match(message, /אימייל/);
+});
+
+test('describeEventProblem checks the title before everything else', () => {
   // Order matters: report the first thing the organizer should fix.
-  const broken = { title: '', organizer: { name: '', phone: '' }, guests: [{ name: '', phone: '', email: '' }] };
-  assert.match(describeEventProblem(broken), /שם לאירוע/);
+  const broken = { title: '', organizer: { name: '', phone: '' }, options: [], guests: [{ name: '', phone: '', email: '' }] };
+  assert.match(describeEventProblem(broken, TODAY), /שם לאירוע/);
+});
+
+test('describeEventProblem checks the times before the guests', () => {
+  // The wizard asks for times first, so that is where it should send them back to.
+  assert.match(problem({ options: [], guests: [{ name: '', phone: '', email: '' }] }), /אפשרות זמן אחת/);
 });
 
 test('describeEventProblem survives a missing argument', () => {
   assert.match(describeEventProblem(), /שם לאירוע/);
   assert.match(describeEventProblem({}), /שם לאירוע/);
+});
+
+// --- time options -------------------------------------------------------------
+// Nothing validated these at all: an event could be saved, and invites sent, with a
+// blank date in the list.
+
+const options = (patch) => describeOptionsProblem(
+  { options: [['2026-03-10', '10:00']], deadline: '2026-03-09', ...patch }, TODAY
+);
+
+test('describeOptionsProblem passes a sane list', () => {
+  assert.equal(options({}), null);
+  assert.equal(options({ deadline: '' }), null, 'the deadline is optional');
+  assert.equal(options({ deadline: null }), null);
+});
+
+test('describeOptionsProblem needs at least one option', () => {
+  assert.match(options({ options: [] }), /אפשרות זמן אחת/);
+  assert.match(options({ options: null }), /אפשרות זמן אחת/);
+  assert.match(describeOptionsProblem(undefined, TODAY), /אפשרות זמן אחת/);
+});
+
+test('describeOptionsProblem rejects a half-filled row', () => {
+  assert.match(options({ options: [['', '10:00']] }), /תאריך ושעה/);
+  assert.match(options({ options: [['2026-03-10', '']] }), /תאריך ושעה/);
+  assert.match(options({ options: [['2026-03-10', '10:00'], ['', '']] }), /תאריך ושעה/,
+    'a later blank row counts too');
+});
+
+test('describeOptionsProblem rejects a slot that has already passed', () => {
+  assert.match(options({ options: [['2026-02-28', '10:00']] }), /כבר עברה/);
+  assert.equal(options({ options: [[TODAY, '23:30']], deadline: TODAY }), null,
+    'today is still on offer — the time of day may be hours away');
+});
+
+test('describeOptionsProblem catches the same slot listed twice', () => {
+  assert.match(options({ options: [['2026-03-10', '10:00'], ['2026-03-10', '10:00']] }), /פעמיים/);
+  assert.equal(options({ options: [['2026-03-10', '10:00'], ['2026-03-10', '14:00']] }), null,
+    'same day, different hour, is a real second option');
+});
+
+test('describeOptionsProblem refuses a deadline later than the first slot', () => {
+  // Answering after the meeting has happened is meaningless. The shipped defaults put
+  // the deadline three days out and the meeting two, so this was the out-of-the-box state.
+  assert.match(options({ options: [['2026-03-10', '10:00']], deadline: '2026-03-11' }), /מאוחר/);
+  assert.equal(options({ options: [['2026-03-10', '10:00']], deadline: '2026-03-10' }), null,
+    'answering on the day of the meeting is still in time');
+});
+
+test('describeOptionsProblem measures the deadline against the earliest slot', () => {
+  const list = [['2026-03-20', '10:00'], ['2026-03-10', '09:00']];
+  assert.match(options({ options: list, deadline: '2026-03-15' }), /2026-03-10/,
+    'names the slot the deadline has to fit behind, whatever order they were typed in');
+});
+
+test('describeOptionsProblem rejects a deadline that has already passed', () => {
+  assert.match(options({ deadline: '2026-02-01' }), /כבר עבר/);
+});
+
+test('describeOptionsProblem tolerates a timestamp-shaped deadline', () => {
+  assert.equal(options({ deadline: '2026-03-09T00:00:00Z' }), null);
 });
 
 test('eventSavedMessage reads correctly for none, one and many', () => {
@@ -386,11 +464,59 @@ test('eventSavedMessage reads correctly for none, one and many', () => {
   assert.match(eventSavedMessage(4), /4 המוזמנים/);
 });
 
-test('guestContactValid requires a name and one channel', () => {
-  assert.equal(guestContactValid({ name: 'דנה', phone: '972541111111', email: '' }), true);
-  assert.equal(guestContactValid({ name: 'דנה', phone: '', email: 'd@example.com' }), true);
-  assert.equal(guestContactValid({ name: 'דנה', phone: '', email: '' }), false, 'no way to reach them');
-  assert.equal(guestContactValid({ name: '', phone: '972541111111', email: '' }), false, 'no name');
-  assert.equal(guestContactValid({ name: '   ', phone: '972541111111', email: '' }), false, 'blank name');
-  assert.equal(guestContactValid({}), false);
+test('describeGuestProblem requires a name and one channel', () => {
+  assert.equal(describeGuestProblem({ name: 'דנה', phone: '972541111111', email: '' }), null);
+  assert.equal(describeGuestProblem({ name: 'דנה', phone: '', email: 'd@example.com' }), null);
+  assert.match(describeGuestProblem({ name: 'דנה', phone: '', email: '' }), /טלפון או אימייל/);
+  assert.match(describeGuestProblem({ name: '', phone: '972541111111', email: '' }), /שם/);
+  assert.match(describeGuestProblem({ name: '   ', phone: '972541111111', email: '' }), /שם/, 'blank name');
+  assert.match(describeGuestProblem({}), /שם/);
+  assert.match(describeGuestProblem(), /שם/);
+});
+
+// The guest-edit fields sit outside a <form>, so type=email validates nothing there and
+// "dana@" was accepted as a way to reach someone.
+test('describeGuestProblem rejects a malformed e-mail even when a phone is present', () => {
+  assert.match(describeGuestProblem({ name: 'דנה', phone: '972541111111', email: 'dana@' }), /אימייל/);
+  assert.equal(describeGuestProblem({ name: 'דנה', phone: '972541111111', email: '' }), null,
+    'an empty e-mail is not a malformed one');
+});
+
+test('emailLooksValid accepts real addresses and rejects the common typos', () => {
+  assert.equal(emailLooksValid('dana@example.com'), true);
+  assert.equal(emailLooksValid('  dana.levi+meetly@sub.example.co.il  '), true);
+  assert.equal(emailLooksValid('dana@'), false);
+  assert.equal(emailLooksValid('dana@example'), false, 'no dotted domain');
+  assert.equal(emailLooksValid('dana example@x.com'), false, 'embedded space');
+  assert.equal(emailLooksValid('@example.com'), false);
+  assert.equal(emailLooksValid(''), false);
+  assert.equal(emailLooksValid(null), false);
+});
+
+// --- account name -------------------------------------------------------------
+// Supabase keeps the name in user_metadata; the app read a top-level `name` and found
+// nothing, so the sidebar, the greeting and the profile field were blank while signed in.
+
+test('displayName reads the Supabase user_metadata shapes', () => {
+  assert.equal(displayName({ user_metadata: { name: 'יורם' } }, null), 'יורם');
+  assert.equal(displayName({ user_metadata: { full_name: 'יורם נבון' } }, null), 'יורם נבון',
+    'Google supplies full_name');
+  assert.equal(displayName({ name: 'יורם' }, null), 'יורם', 'a top-level name still counts');
+});
+
+test('displayName prefers the saved profile, which is the editable one', () => {
+  const user = { user_metadata: { full_name: 'Yoram from Google' } };
+  assert.equal(displayName(user, { name: 'יורם' }), 'יורם');
+  assert.equal(displayName(user, { name: '   ' }), 'Yoram from Google', 'blank does not win');
+  assert.equal(displayName(user, {}), 'Yoram from Google');
+});
+
+test('displayName is an empty string when nothing is known', () => {
+  assert.equal(displayName(null, null), '');
+  assert.equal(displayName(undefined, undefined), '');
+  assert.equal(displayName({ user_metadata: {} }, { name: '' }), '');
+});
+
+test('displayName trims what it returns', () => {
+  assert.equal(displayName(null, { name: '  יורם  ' }), 'יורם');
 });

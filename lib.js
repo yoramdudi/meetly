@@ -149,25 +149,78 @@
     return digits;                                        // assume a country code is present
   };
 
-  // ---------------------------------------------------------------- guests
+  // ---------------------------------------------------------------- identity
+  //
+  // Supabase keeps the account name in user_metadata — `name` for a password sign-up,
+  // `full_name` for Google. Reading a top-level `name` off the user found neither, so
+  // the sidebar, the greeting and the profile field all came up blank while signed in.
+  // The saved profile comes first: it is the one the organizer can actually edit.
 
-  // A guest needs a name plus at least one way to reach them.
-  const guestContactValid = ({ name, phone, email }) => Boolean(String(name || '').trim())
-    && Boolean(String(phone || '').trim() || String(email || '').trim());
+  const displayName = (authUser, profile) => [
+    profile?.name,
+    authUser?.user_metadata?.full_name,
+    authUser?.user_metadata?.name,
+    authUser?.name
+  ].map((value) => String(value ?? '').trim()).find(Boolean) || '';
+
+  // ---------------------------------------------------------------- guests
 
   const filled = (value) => Boolean(String(value ?? '').trim());
 
+  // Not RFC 5322 — just enough to catch the typo that would send an invite nowhere.
+  // The guest-edit fields sit outside a <form>, so type=email validates nothing there.
+  const emailLooksValid = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(value ?? '').trim());
+
+  // A guest needs a name plus at least one way to reach them. Returns the first thing
+  // wrong, or null.
+  const describeGuestProblem = ({ name, phone, email } = {}) => {
+    if (!filled(name)) return 'יש למלא שם למוזמן.';
+    if (!filled(phone) && !filled(email)) return 'צריך טלפון או אימייל.';
+    if (filled(email) && !emailLooksValid(email)) return 'כתובת האימייל אינה תקינה.';
+    return null;
+  };
+
+  // Every slot has to be one the guests can actually be asked about: a real date and
+  // time, still ahead, and not the same slot twice. Nothing checked options at all, so
+  // an event could be saved — and sent out — with a blank date in it.
+  const describeOptionsProblem = ({ options, deadline } = {}, todayIso) => {
+    const list = (options || []).filter(Array.isArray);
+    if (!list.length) return 'יש להוסיף לפחות אפשרות זמן אחת.';
+    const now = todayIso || today();
+    const seen = new Set();
+    for (const [date, time] of list) {
+      if (!filled(date) || !filled(time)) return 'יש למלא תאריך ושעה בכל אפשרות זמן.';
+      if (String(date) < now) return `אפשרות הזמן ${date} כבר עברה.`;
+      const slot = `${date} ${time}`;
+      if (seen.has(slot)) return `אפשרות הזמן ${slot} מופיעה פעמיים.`;
+      seen.add(slot);
+    }
+    if (!filled(deadline)) return null;
+    const day = String(deadline).slice(0, 10);
+    if (day < now) return 'מועד סגירת הבחירה כבר עבר.';
+    // Answering after the meeting has happened is meaningless, so the deadline can
+    // never fall later than the earliest slot on offer.
+    const earliest = list.map(([date]) => String(date)).sort()[0];
+    if (day > earliest) return `מועד סגירת הבחירה מאוחר מאפשרות הזמן הראשונה (${earliest}).`;
+    return null;
+  };
+
   // Returns the first thing wrong with a new event, or null. One generic sentence used
-  // to cover five different failures, so an empty title reported a guest problem.
-  const describeEventProblem = ({ title, organizer, guests } = {}) => {
+  // to cover five different failures, so an empty title reported a guest problem. The
+  // order follows the wizard: details, then times, then guests.
+  const describeEventProblem = ({ title, organizer, guests, options, deadline } = {}, todayIso) => {
     if (!filled(title)) return 'יש למלא שם לאירוע.';
     if (!filled(organizer?.name)) return 'חסר שם המארגן/ת. אפשר להשלים בפרופיל.';
     if (!filled(organizer?.phone)) return 'חסר טלפון המארגן/ת. אפשר להשלים בפרופיל.';
+    const timeProblem = describeOptionsProblem({ options, deadline }, todayIso);
+    if (timeProblem) return timeProblem;
     const list = guests || [];
     const nameless = list.find((guest) => !filled(guest?.name));
     if (nameless) return 'יש למלא שם לכל מוזמן.';
     const unreachable = list.find((guest) => !filled(guest?.phone) && !filled(guest?.email));
     if (unreachable) return `צריך טלפון או אימייל עבור ${unreachable.name}.`;
+    const badEmail = list.find((guest) => filled(guest?.email) && !emailLooksValid(guest.email));
+    if (badEmail) return `כתובת האימייל של ${badEmail.name} אינה תקינה.`;
     return null;
   };
 
@@ -208,8 +261,8 @@
   return {
     isoDate, daysFromNow, today, deadlinePassed, dateBadge, readableChoiceDate,
     meetingMinutes, durationLabel, calendarStamp, calendarRange, calendarLink,
-    icsEscape, icsFile, normalizePhone,
-    guestContactValid, applyGuestEdit, guestsCarryTokens, removeGuestAt, appendGuest,
-    describeEventProblem, eventSavedMessage
+    icsEscape, icsFile, normalizePhone, displayName, emailLooksValid,
+    applyGuestEdit, guestsCarryTokens, removeGuestAt, appendGuest,
+    describeGuestProblem, describeOptionsProblem, describeEventProblem, eventSavedMessage
   };
 }));

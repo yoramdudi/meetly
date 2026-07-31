@@ -1,6 +1,6 @@
 {
   "name": "meetly",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "private": true,
   "description": "Hebrew-first meeting scheduling PWA. Static front end on GitHub Pages, Supabase for data.",
   "license": "MIT",

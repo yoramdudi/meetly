@@ -5,9 +5,9 @@ const $$ = (selector) => document.querySelectorAll(selector);
 // under Node. Destructured here to keep the call sites below unqualified.
 const {
   daysFromNow, deadlinePassed, dateBadge, readableChoiceDate,
-  meetingMinutes, durationLabel, calendarLink, icsFile, normalizePhone,
-  guestContactValid, applyGuestEdit, guestsCarryTokens, removeGuestAt, appendGuest,
-  describeEventProblem, eventSavedMessage
+  meetingMinutes, durationLabel, calendarLink, icsFile, normalizePhone, displayName,
+  applyGuestEdit, guestsCarryTokens, removeGuestAt, appendGuest,
+  describeGuestProblem, describeOptionsProblem, describeEventProblem, eventSavedMessage
 } = window.MeetlyLib;
 
 // Every element in this file is built through the DOM rather than from an HTML
@@ -28,7 +28,7 @@ const el = (tag, props = {}, children = []) => {
 };
 const clear = (node) => { node.textContent = ''; return node; };
 
-const APP_VERSION = '1.3.1';
+const APP_VERSION = '1.3.2';
 $('#appVersion').textContent = `גרסה ${APP_VERSION}`;
 const modal = $('#eventModal');
 const backdrop = $('#modalBackdrop');
@@ -264,13 +264,28 @@ $('#showAllEvents').onclick = async () => {
   $('#ownedEvents').scrollIntoView({ behavior: 'smooth', block: 'start' });
 };
 
-const defaultDeadline = () => daysFromNow(3);
+// The deadline has to land on or before the first slot; the defaults had it three days
+// out and the meeting two, so out of the box you could still answer a day after the
+// meeting had happened.
+const DEFAULT_OPTION_DAYS = 3;
+const DEFAULT_DEADLINE_DAYS = 2;
+
+// Keep the deadline picker's ceiling in step with the slots on offer, so the rule is
+// visible in the calendar widget rather than only reported after a failed submit.
+const syncDeadlineCeiling = () => {
+  const earliest = [...$$('#timeList .time-row [type=date]')]
+    .map((input) => input.value).filter(Boolean).sort()[0] || '';
+  const deadline = $('#deadline');
+  deadline.max = earliest;
+  if (earliest && deadline.value > earliest) deadline.value = earliest;
+};
 
 // The form ships with no dates baked into the markup; every default is derived here
 // so the app never opens on a date that has already passed.
 const resetEventFormDates = () => {
-  $('#deadline').value = defaultDeadline();
-  $$('#timeList .time-row [type=date]').forEach((input) => { input.value = daysFromNow(2); });
+  $('#deadline').value = daysFromNow(DEFAULT_DEADLINE_DAYS);
+  $$('#timeList .time-row [type=date]').forEach((input) => { input.value = daysFromNow(DEFAULT_OPTION_DAYS); });
+  syncDeadlineCeiling();
 };
 
 const eventForm = $('#eventForm');
@@ -313,8 +328,17 @@ const showWizardStep = (index) => {
   $('.step-pill').textContent = `שלב ${index + 1} מתוך 3`;
 };
 
+// Each step is checked before you can leave it, against the same rules the submit
+// runs — otherwise a blank date on step 2 is only reported from step 3.
 wizardNext.onclick = () => {
-  if (wizardStepIndex === 0 && !$('#eventName').reportValidity()) return;
+  if (wizardStepIndex === 0) {
+    if ($('#eventName').reportValidity()) showWizardStep(1);
+    return;
+  }
+  if (wizardStepIndex === 1) {
+    const problem = describeOptionsProblem({ options: readTimeOptions(), deadline: $('#deadline').value });
+    if (problem) { toast(problem); return; }
+  }
   showWizardStep(wizardStepIndex + 1);
 };
 wizardBack.onclick = () => showWizardStep(wizardStepIndex - 1);
@@ -353,7 +377,7 @@ const applyTodayLabel = () => {
 };
 
 const applyProfile = () => {
-  const accountName = authUser?.name || '';
+  const accountName = displayName(authUser, profile);
   logoutButton.classList.toggle('hidden', !authUser);
   $('#profileName').textContent = accountName || 'הגדרת פרופיל';
   $('#profilePhone').textContent = profile?.phone || 'לחצו להוספת טלפון';
@@ -399,18 +423,29 @@ $$('.nav-link').forEach((link) => {
   };
 });
 
+const readTimeOptions = () => [...$$('#timeList .time-row')].map((row) => [
+  row.querySelector('[type=date]').value,
+  row.querySelector('[type=time]').value
+]);
+
 $('#addTime').onclick = () => {
   const last = [...$$('#timeList .time-row')].pop();
   $('#timeList').append(el('div', { class: 'time-row' }, [
-    el('input', { type: 'date', 'aria-label': 'תאריך', value: last?.querySelector('[type=date]')?.value || daysFromNow(2) }),
+    el('input', { type: 'date', 'aria-label': 'תאריך', value: last?.querySelector('[type=date]')?.value || daysFromNow(DEFAULT_OPTION_DAYS) }),
     el('input', { type: 'time', 'aria-label': 'שעה', value: '11:00' }),
     el('button', { type: 'button', class: 'remove-time', 'aria-label': 'הסרת זמן', text: '×' })
   ]));
+  syncDeadlineCeiling();
 };
 
 $('#timeList').onclick = (event) => {
-  if (event.target.classList.contains('remove-time') && $$('#timeList .time-row').length > 1) event.target.parentElement.remove();
+  if (event.target.classList.contains('remove-time') && $$('#timeList .time-row').length > 1) {
+    event.target.parentElement.remove();
+    syncDeadlineCeiling();
+  }
 };
+// Pulling the meeting earlier must pull the deadline with it, not strand it after.
+$('#timeList').oninput = syncDeadlineCeiling;
 
 const addGuestRow = () => {
   $('#guestList').append(el('div', { class: 'time-row guest-row' }, [
@@ -552,19 +587,17 @@ const downloadIcs = (eventData) => {
 $('#eventForm').onsubmit = async (event) => {
   event.preventDefault();
   const title = $('#eventName').value.trim();
-  const organizer = { ...profile, name: authUser?.name || profile?.name || '' };
+  const organizer = { ...profile, name: displayName(authUser, profile) };
   const guests = [...$$('.guest-row')].map((row) => ({
     name: row.querySelector('.guest-name').value.trim(),
     phone: normalizePhone(row.querySelector('.guest-phone').value),
     email: row.querySelector('.guest-email').value.trim()
   })).filter((guest) => guest.name || guest.phone || guest.email);
-  const options = [...$$('#timeList .time-row')].map((row) => [
-    row.querySelector('[type=date]').value,
-    row.querySelector('[type=time]').value
-  ]);
+  const options = readTimeOptions();
+  const deadline = $('#deadline').value;
 
   // Name the actual problem instead of blaming the guest list for everything.
-  const problem = describeEventProblem({ title, organizer, guests });
+  const problem = describeEventProblem({ title, organizer, guests, options, deadline });
   if (problem) {
     toast(problem);
     return;
@@ -576,7 +609,7 @@ $('#eventForm').onsubmit = async (event) => {
     const createdEvent = await apiRequest('/events', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ title, options, guests, organizer, duration: $('#duration').value, deadline: $('#deadline').value })
+      body: JSON.stringify({ title, options, guests, organizer, duration: $('#duration').value, deadline })
     });
     addEventToList(createdEvent);
     hide();
@@ -782,8 +815,9 @@ const saveGuestEdit = async (guestIndex) => {
   const name = form.querySelector('.guest-edit-name').value.trim();
   const phone = normalizePhone(form.querySelector('.guest-edit-phone').value);
   const email = form.querySelector('.guest-edit-email').value.trim();
-  if (!guestContactValid({ name, phone, email })) {
-    toast('יש למלא שם, ולפחות טלפון או אימייל.');
+  const problem = describeGuestProblem({ name, phone, email });
+  if (problem) {
+    toast(problem);
     return;
   }
   // Whatever the change, the guests already on the row must come back with their id and
@@ -821,6 +855,7 @@ const patchGuests = async (guests) => {
   editingGuestIndex = null;
   renderGuestList();
   renderDetailStats();
+  syncFinalizeButton();
   syncEventCardCount();
   return updated;
 };
@@ -891,6 +926,17 @@ const renderDetailStats = () => {
   });
 };
 
+// There is nothing to weigh up until somebody has answered, so a freshly created event
+// opens on its guest list without a "close the choice" button sitting under it. Removing
+// the last guest who answered takes their response with them, so this is re-evaluated on
+// every guest-list write rather than only when the modal opens.
+const syncFinalizeButton = () => {
+  const chosen = activeEvent?.finalSelection?.option || null;
+  const answered = (activeEvent?.responses || []).length > 0;
+  finalizeButton.classList.toggle('hidden', !(detailsIsOwner && (answered || chosen)));
+  finalizeButton.textContent = chosen ? 'עדכון המועד ושליחה מחדש' : 'סגירת בחירה ושליחת זימונים';
+};
+
 // The card in the grid shows a guest count, so it goes stale the moment one is
 // added or removed.
 const syncEventCardCount = () => {
@@ -902,25 +948,37 @@ const syncEventCardCount = () => {
 
 const openEventDetails = (eventData, ownerView = Boolean(authUser && eventData.ownerId === authUser.id)) => {
   activeEvent = eventData.id ? eventData : null;
+  const chosenIndex = eventData.finalSelection?.index;
+  const chosenOption = eventData.finalSelection?.option;
   $('#detailTitle').textContent = eventData.title;
   clear($('#detailDuration')).append(el('div', { text: durationLabel(eventData.duration) || 'פרטי המשך לא זמינים' }));
+  // The chosen slot was shown only in the organizer's stats tab, so an invitee opening
+  // a closed event saw an unmarked list of every option and had to guess.
+  $('#detailFinalSection').classList.toggle('hidden', !chosenOption);
+  if (chosenOption) {
+    clear($('#detailFinal')).append(el('div', { text: `${chosenOption[0]} · ${chosenOption[1]} · ${durationLabel(eventData.duration)}` }));
+  }
   const optionList = clear($('#detailOptions'));
-  eventData.options.forEach(([date, time]) => optionList.append(el('div', { text: `${date} · ${time}` })));
+  eventData.options.forEach(([date, time], index) => {
+    const chosen = index === chosenIndex;
+    optionList.append(el('div', {
+      class: chosen ? 'detail-chosen' : null,
+      text: chosen ? `${date} · ${time} — נבחר` : `${date} · ${time}`
+    }));
+  });
   clear($('#detailGuests'));
   const isOwner = ownerView;
   $('#detailGuestsTab').classList.toggle('hidden', !isOwner);
   $('#detailStatsTab').classList.toggle('hidden', !isOwner);
-  $('#openResponseFromDetails').classList.toggle('hidden', Boolean(isOwner));
-  finalizeButton.classList.toggle('hidden', !isOwner);
-  calendarButton.classList.toggle('hidden', !eventData.finalSelection);
-  icsButton.classList.toggle('hidden', !eventData.finalSelection);
-  finalizeButton.textContent = isOwner && eventData.finalSelection
-    ? 'עדכון המועד ושליחה מחדש'
-    : 'סגירת בחירה ושליחת זימונים';
+  // Nothing left to answer once the slot is locked.
+  $('#openResponseFromDetails').classList.toggle('hidden', Boolean(isOwner) || Boolean(chosenOption));
+  calendarButton.classList.toggle('hidden', !chosenOption);
+  icsButton.classList.toggle('hidden', !chosenOption);
   // For organizers, lead with the guest list—the primary next action after opening an existing event.
   setDetailsTab(isOwner ? 'guests' : 'details');
   detailsIsOwner = isOwner;
   editingGuestIndex = null;
+  syncFinalizeButton();
   if (isOwner) renderDetailStats();
   renderGuestList();
   show(detailsModal);
@@ -1019,6 +1077,12 @@ const loadInvitation = async () => {
     if (!activeEvent) throw new Error('not found');
     const saved = JSON.parse(localStorage.getItem(invitedEventsKey) || '[]');
     if (!saved.some((item) => item.id === activeEvent.id && item.invite === activeInviteToken)) localStorage.setItem(invitedEventsKey, JSON.stringify([{ id: activeEvent.id, invite: activeInviteToken }, ...saved]));
+    // Reopening the invite after the organizer locked a slot should show what was
+    // chosen, not a form whose answers can no longer change anything.
+    if (activeEvent.finalSelection) {
+      openEventDetails(activeEvent, false);
+      return true;
+    }
     setResponseHeader(activeEvent);
     openResponse(activeEvent.options, activeEvent.myAnswers);
     return true;
@@ -1159,7 +1223,11 @@ const init = async () => {
   }
   loadInvitedEvents();
   if (!authUser) { show(authModal); return; }
-  if (!profile?.phone) { profile = { name: profile?.name || authUser.name || '', phone: '' }; show(profileModal); }
+  if (!profile?.phone) {
+    profile = { name: displayName(authUser, profile), phone: '' };
+    applyProfile();
+    show(profileModal);
+  }
   loadEvents();
 };
 

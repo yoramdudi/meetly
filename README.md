@@ -77,6 +77,12 @@ the live project. Reconcile before applying.
   `durationLabel()` and `meetingMinutes()` both read either shape.
 - **Calendar times are wall-clock digits** plus `ctz=Asia/Jerusalem`. Stamps are built
   with UTC arithmetic so the browser's timezone cannot shift them.
+- **The deadline never falls after the first slot.** Answering once the meeting has
+  happened is meaningless, so `describeOptionsProblem()` rejects it, the wizard blocks
+  the step, and the date picker's `max` is kept in step with the slots on offer.
+- **The account name comes from `user_metadata`.** Supabase puts it under `name` for a
+  password sign-up and `full_name` for Google; there is no top-level `name`.
+  `displayName()` is the only place that decides, and the saved profile wins over both.
 - **One send per click.** Invites are never dispatched in a loop — pop-up blockers kill
   everything after the first window. The guest list has a send button per guest.
 - **Calendar goes out as a link, not a file.** `api.whatsapp.com/send?text=` and

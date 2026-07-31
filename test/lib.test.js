@@ -8,7 +8,8 @@ const path = require('node:path');
 const {
   isoDate, daysFromNow, today, deadlinePassed, dateBadge, readableChoiceDate,
   meetingMinutes, durationLabel, calendarStamp, calendarRange, calendarLink,
-  icsEscape, icsFile, normalizePhone, displayName, emailLooksValid,
+  icsEscape, icsFile, normalizePhone, inviteFragment, parseInviteFragment,
+  displayName, emailLooksValid,
   applyGuestEdit, guestsCarryTokens, removeGuestAt, appendGuest,
   describeGuestProblem, describeOptionsProblem, describeEventProblem, eventSavedMessage
 } = require('../lib.js');
@@ -491,6 +492,64 @@ test('emailLooksValid accepts real addresses and rejects the common typos', () =
   assert.equal(emailLooksValid('@example.com'), false);
   assert.equal(emailLooksValid(''), false);
   assert.equal(emailLooksValid(null), false);
+});
+
+// --- invite links ---------------------------------------------------------------
+// The token is a bearer credential. In the query string it reached the static host's
+// access logs and the Referer of every cross-origin request; the fragment is never
+// sent to a server.
+
+test('inviteFragment keeps the token out of the query string', () => {
+  const fragment = inviteFragment('abc-123', 'deadbeef');
+  assert.equal(fragment, '#event=abc-123&invite=deadbeef');
+  assert.ok(fragment.startsWith('#'), 'a fragment, never a query');
+  assert.doesNotMatch(fragment, /\?/);
+});
+
+test('inviteFragment escapes values that would otherwise split the fragment', () => {
+  const fragment = inviteFragment('a&b=c', 'x y#z');
+  assert.equal(fragment, '#event=a%26b%3Dc&invite=x%20y%23z');
+  assert.deepEqual(parseInviteFragment(fragment), { eventId: 'a&b=c', inviteToken: 'x y#z' });
+});
+
+test('parseInviteFragment round-trips what inviteFragment builds', () => {
+  assert.deepEqual(
+    parseInviteFragment(inviteFragment('abc-123', 'deadbeef')),
+    { eventId: 'abc-123', inviteToken: 'deadbeef' }
+  );
+});
+
+test('parseInviteFragment takes the fragment with or without the hash', () => {
+  const expected = { eventId: 'e1', inviteToken: 't1' };
+  assert.deepEqual(parseInviteFragment('#event=e1&invite=t1'), expected);
+  assert.deepEqual(parseInviteFragment('event=e1&invite=t1'), expected);
+});
+
+test('parseInviteFragment rejects half an invite', () => {
+  // Half an invite cannot be answered, so it is not an invite at all.
+  assert.equal(parseInviteFragment('#event=e1'), null);
+  assert.equal(parseInviteFragment('#invite=t1'), null);
+  assert.equal(parseInviteFragment('#event=&invite=t1'), null, 'an empty id is not an id');
+  assert.equal(parseInviteFragment('#event=e1&invite='), null);
+});
+
+test('parseInviteFragment ignores fragments that are not invites', () => {
+  assert.equal(parseInviteFragment(''), null);
+  assert.equal(parseInviteFragment('#'), null);
+  assert.equal(parseInviteFragment('#respond'), null, 'the pre-1.4 marker is not an invite');
+  assert.equal(parseInviteFragment(null), null);
+  assert.equal(parseInviteFragment(undefined), null);
+});
+
+test('parseInviteFragment ignores the OAuth payload that lands in the same fragment', () => {
+  // The implicit flow returns its tokens in the fragment too; only a restored invite
+  // fragment should ever be treated as one.
+  assert.equal(parseInviteFragment('#access_token=abc&refresh_token=def&token_type=bearer'), null);
+});
+
+test('parseInviteFragment tolerates extra parameters alongside the invite', () => {
+  assert.deepEqual(parseInviteFragment('#utm=x&event=e1&invite=t1&other=y'),
+    { eventId: 'e1', inviteToken: 't1' });
 });
 
 // --- account name -------------------------------------------------------------

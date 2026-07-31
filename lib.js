@@ -149,6 +149,27 @@
     return digits;                                        // assume a country code is present
   };
 
+  // ---------------------------------------------------------------- invite links
+  //
+  // The invite token is a bearer credential: whoever holds it answers as that guest.
+  // In the query string it reached the static host's access logs, the browser history
+  // and the Referer header of every cross-origin request the page made. A fragment is
+  // never sent to a server at all, so the token rides there instead. The pair is also
+  // the whole marker — an event id and a token together mean "this is an invite", so
+  // the old `#respond` sentinel is gone.
+
+  const inviteFragment = (eventId, inviteToken) => `#event=${encodeURIComponent(eventId)}`
+    + `&invite=${encodeURIComponent(inviteToken)}`;
+
+  // Takes the fragment with or without its leading '#'. Half an invite cannot be
+  // answered, so anything short of both halves is not an invite at all.
+  const parseInviteFragment = (hash) => {
+    const params = new URLSearchParams(String(hash ?? '').replace(/^#/, ''));
+    const eventId = params.get('event');
+    const inviteToken = params.get('invite');
+    return eventId && inviteToken ? { eventId, inviteToken } : null;
+  };
+
   // ---------------------------------------------------------------- identity
   //
   // Supabase keeps the account name in user_metadata — `name` for a password sign-up,
@@ -261,7 +282,8 @@
   return {
     isoDate, daysFromNow, today, deadlinePassed, dateBadge, readableChoiceDate,
     meetingMinutes, durationLabel, calendarStamp, calendarRange, calendarLink,
-    icsEscape, icsFile, normalizePhone, displayName, emailLooksValid,
+    icsEscape, icsFile, normalizePhone, inviteFragment, parseInviteFragment,
+    displayName, emailLooksValid,
     applyGuestEdit, guestsCarryTokens, removeGuestAt, appendGuest,
     describeGuestProblem, describeOptionsProblem, describeEventProblem, eventSavedMessage
   };

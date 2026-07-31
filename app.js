@@ -6,6 +6,7 @@ const $$ = (selector) => document.querySelectorAll(selector);
 const {
   daysFromNow, deadlinePassed, dateBadge, readableChoiceDate,
   meetingMinutes, durationLabel, calendarLink, icsFile, normalizePhone, displayName,
+  inviteFragment, parseInviteFragment,
   applyGuestEdit, guestsCarryTokens, removeGuestAt, appendGuest,
   describeGuestProblem, describeOptionsProblem, describeEventProblem, eventSavedMessage
 } = window.MeetlyLib;
@@ -28,7 +29,7 @@ const el = (tag, props = {}, children = []) => {
 };
 const clear = (node) => { node.textContent = ''; return node; };
 
-const APP_VERSION = '1.3.2';
+const APP_VERSION = '1.4.0';
 $('#appVersion').textContent = `גרסה ${APP_VERSION}`;
 const modal = $('#eventModal');
 const backdrop = $('#modalBackdrop');
@@ -483,8 +484,9 @@ if (navigator.contacts?.select) {
   };
 }
 
-// location.pathname, not just the origin: the app may be served from a sub-path.
-const inviteUrlFor = (eventData, guest) => `${location.origin}${location.pathname}?event=${encodeURIComponent(eventData.id)}&invite=${encodeURIComponent(guest.inviteToken)}#respond`;
+// location.pathname, not just the origin: the app may be served from a sub-path. The
+// token goes in the fragment, which no server ever sees — see inviteFragment().
+const inviteUrlFor = (eventData, guest) => `${location.origin}${location.pathname}${inviteFragment(eventData.id, guest.inviteToken)}`;
 // Without a token the link cannot be answered, so refuse to send a dead invite.
 const hasInviteToken = (guest) => {
   if (guest.inviteToken) return true;
@@ -1058,9 +1060,10 @@ $('#saveResponse').onclick = async () => {
 };
 
 const loadInvitation = async () => {
-  const eventId = new URLSearchParams(location.search).get('event');
-  activeInviteToken = new URLSearchParams(location.search).get('invite');
-  if (!eventId || !activeInviteToken || location.hash !== '#respond') return false;
+  const invite = parseInviteFragment(location.hash);
+  if (!invite) return false;
+  const { eventId } = invite;
+  activeInviteToken = invite.inviteToken;
   try {
     activeEvent = await apiRequest(`/events?id=${encodeURIComponent(eventId)}&invite=${encodeURIComponent(activeInviteToken)}`);
     if (!activeEvent) throw new Error('not found');
@@ -1081,10 +1084,7 @@ const loadInvitation = async () => {
   }
 };
 
-const isInvitationLink = () => {
-  const query = new URLSearchParams(location.search);
-  return Boolean(query.get('event') && query.get('invite') && location.hash === '#respond');
-};
+const isInvitationLink = () => Boolean(parseInviteFragment(location.hash));
 
 $('#continueGuest').onclick = async () => {
   hide();
@@ -1175,6 +1175,12 @@ const init = async () => {
     if (authUser) await loadInvitation();
     else show(inviteAccessModal);
     return;
+  }
+  // A link sent before the token moved into the fragment. It is not honoured — say so,
+  // rather than dropping the guest at a login screen with no explanation.
+  if (new URLSearchParams(location.search).get('invite')) {
+    history.replaceState(null, '', location.pathname);
+    toast('קישור ההזמנה הזה כבר לא בתוקף. בקשו מהמארגן/ת לשלוח קישור מעודכן.');
   }
   loadInvitedEvents();
   if (!authUser) { show(authModal); return; }

@@ -77,6 +77,14 @@ the live project. Reconcile before applying.
   `durationLabel()` and `meetingMinutes()` both read either shape.
 - **Calendar times are wall-clock digits** plus `ctz=Asia/Jerusalem`. Stamps are built
   with UTC arithmetic so the browser's timezone cannot shift them.
+- **The invite token rides in the URL fragment, never the query string.** It is a
+  bearer credential, and a query string reaches the static host's access logs, the
+  browser history and the `Referer` of every cross-origin request. `inviteFragment()`
+  builds the link and `parseInviteFragment()` is the only reader. The implicit OAuth
+  flow returns its own payload in that same fragment, so `signInWithGoogle()` parks the
+  invite in `sessionStorage` and `finishGoogleLogin()` puts it back.
+  Links issued before 1.4.0 use `?event=…&invite=…#respond` and are **not** honoured;
+  the app reports that and asks the guest for a fresh link.
 - **The deadline never falls after the first slot.** Answering once the meeting has
   happened is meaningless, so `describeOptionsProblem()` rejects it, the wizard blocks
   the step, and the date picker's `max` is kept in step with the slots on offer.
